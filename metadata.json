@@ -1,0 +1,7 @@
+{
+  "id": "network-topology",
+  "name": "Network Topology Builder",
+  "description": "Create, store, and run generated StratoCyberLab network topologies with routed segments, firewall rules, host roles, users, and optional AI-generated data.",
+  "version": "0.1.0",
+  "ui_url": "http://scl-plugin-network-topology-control-plane:9002/"
+}

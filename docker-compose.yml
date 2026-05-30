@@ -1,0 +1,23 @@
+name: network-topology
+
+services:
+  control-plane:
+    build: .
+    container_name: scl-plugin-network-topology-control-plane
+    stop_signal: SIGINT
+    environment:
+      - DASHBOARD_LLM_URL=http://dashboard/api/llm/chat
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - network-topology-data:/app/data
+    networks:
+      - playground-net
+
+volumes:
+  network-topology-data:
+    name: scl-plugin-network-topology-data
+
+networks:
+  playground-net:
+    external: true
+    name: playground-net
