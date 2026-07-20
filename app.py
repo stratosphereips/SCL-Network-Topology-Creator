@@ -2217,6 +2217,17 @@ nft -f /tmp/router-rules.nft || true
 """
 
 
+def host_entrypoint_cmd(host_type):
+    """Return a shell command that mimics the image's native startup for cron-injected hosts."""
+    if host_type == 'pivot':
+        return '/usr/sbin/sshd -D'
+    if host_type == 'slips-peer':
+        return '/usr/local/bin/slips-entrypoint.sh'
+    if host_type == 'aracne-attacker':
+        return '/entrypoint.sh'
+    return 'tail -f /dev/null'
+
+
 def generate_compose(topology):
     project_prefix = f"scl-topology-{topology['id']}"
     routers = topology.get('routers') or []
@@ -2354,15 +2365,16 @@ def generate_compose(topology):
                 svc['environment'] = env_vars
             cronjobs = host.get('cronjobs') or []
             if host_type in THESIS_HOST_TYPES:
+                svc['stop_grace_period'] = '30s'
                 if cronjobs:
-                    cron_script = 'echo "' + '\\n'.join(cronjobs) + '" | crontab - && service cron start && '
-                else:
-                    cron_script = ''
-                svc['command'] = ['sh', '-lc', f'{cron_script}exec /entrypoint.sh || tail -f /dev/null']
+                    cron_script = 'echo "' + '\\n'.join(cronjobs) + '" | crontab - 2>/dev/null; service cron start 2>/dev/null; '
+                    svc['command'] = ['sh', '-lc', f'{cron_script}{host_entrypoint_cmd(host_type)}']
+                elif host_type in ('slips-peer', 'aracne-attacker'):
+                    pass
             else:
                 svc['command'] = ['sh', '-lc', host_script(topology, network, host, host_index, gateway_ip)]
                 if cronjobs:
-                    cron_prefix = 'echo "' + '\\n'.join(cronjobs) + '" | crontab - && service cron start; '
+                    cron_prefix = 'echo "' + '\\n'.join(cronjobs) + '" | crontab - 2>/dev/null; service cron start 2>/dev/null; '
                     svc['command'] = ['sh', '-lc', cron_prefix + host_script(topology, network, host, host_index, gateway_ip)]
             compose['services'][service_name] = svc
     return compose
