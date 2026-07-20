@@ -59,7 +59,43 @@ HOST_TYPES = {
         'ports': ['514/tcp'],
         'description': 'Host prepared with log files for investigation.',
     },
+    'slips-peer': {
+        'label': 'SLIPS IDS Peer',
+        'ports': ['22/tcp', '8000/tcp'],
+        'description': 'SLIPS IDS with Zeek, Redis, P2P federation. Uses thesis-slips image.',
+    },
+    'aracne-attacker': {
+        'label': 'Aracne Attacker',
+        'ports': ['22/tcp'],
+        'description': 'LLM-driven pentesting agent. Uses thesis-attacker image.',
+    },
+    'pivot': {
+        'label': 'SSH Pivot',
+        'ports': ['22/tcp'],
+        'description': 'SSH pivot node for lateral movement. Uses thesis-pivot image.',
+    },
+    'slip-ftp': {
+        'label': 'FTP Server',
+        'ports': ['21/tcp', '22/tcp'],
+        'description': 'vsftpd FTP server with cron traffic. Uses thesis-ftp image.',
+    },
+    'slip-snmp': {
+        'label': 'SNMP / Web',
+        'ports': ['161/udp', '8000/tcp', '22/tcp'],
+        'description': 'SNMP agent + Python HTTP server. Uses thesis-snmp image.',
+    },
 }
+
+THESIS_HOST_TYPES = {'slips-peer', 'aracne-attacker', 'pivot', 'slip-ftp', 'slip-snmp'}
+
+def host_image(host_type):
+    return {
+        'slips-peer': 'thesis-slips:latest',
+        'aracne-attacker': 'thesis-attacker:latest',
+        'pivot': 'thesis-pivot:latest',
+        'slip-ftp': 'thesis-ftp:latest',
+        'slip-snmp': 'thesis-snmp:latest',
+    }.get(host_type, BASE_IMAGE)
 
 INDEX_HTML = r"""<!doctype html>
 <html lang="en">
@@ -976,6 +1012,7 @@ INDEX_HTML = r"""<!doctype html>
             <div class="network-head">
               <h3>${escapeHtml(network.name || `Network ${index + 1}`)}</h3>
               <div class="toolbar">
+                <button class="secondary" data-action="duplicate-network" data-network-index="${index}">Copy</button>
                 <button class="secondary" data-action="delete-network" data-network-index="${index}">Delete network</button>
               </div>
             </div>
@@ -990,7 +1027,7 @@ INDEX_HTML = r"""<!doctype html>
               </div>
               <div class="span-3">
                 <label>Hosts</label>
-                <input data-field="network.hostCount" type="number" min="1" max="24" value="${network.hosts.length}">
+                <input data-field="network.hostCount" type="number" min="1" max="48" value="${network.hosts.length}">
               </div>
               <div class="span-3">
                 <label>Internet</label>
@@ -1062,6 +1099,14 @@ INDEX_HTML = r"""<!doctype html>
                   <input data-field="host.ssh_enabled" type="checkbox" ${host.ssh_enabled ? 'checked' : ''}>
                   <span>Enable SSH on this host</span>
                 </label>
+              </div>
+              ${host.type === 'slips-peer' ? `<div class="span-12"><label class="checkbox-line">
+                <input data-field="host.run_web" type="checkbox" ${host.run_web ? 'checked' : ''}>
+                <span>Run web traffic generator (cron job)</span>
+              </label></div>` : ''}
+              <div class="span-12">
+                <label>Cron jobs (one per line, e.g. */5 * * * * /usr/bin/curl http://10.77.2.11/)</label>
+                <textarea data-field="host.cronjobs" rows="2">${escapeHtml((host.cronjobs || []).join('\\n'))}</textarea>
               </div>
               <div class="span-8">
                 <label>Data prompt</label>
@@ -1387,7 +1432,9 @@ INDEX_HTML = r"""<!doctype html>
                 ssh_enabled: checkedOf(hostEl, 'host.ssh_enabled'),
                 generate_data: checkedOf(hostEl, 'host.generate_data'),
                 data_prompt: valueOf(hostEl, 'host.data_prompt'),
-                data_content: valueOf(hostEl, 'host.data_content')
+                data_content: valueOf(hostEl, 'host.data_content'),
+                run_web: checkedOf(hostEl, 'host.run_web'),
+                cronjobs: (valueOf(hostEl, 'host.cronjobs') || '').split('\\n').filter((s) => s.trim()),
               };
             });
         });
@@ -1650,7 +1697,7 @@ INDEX_HTML = r"""<!doctype html>
             collect();
             const i = Number(event.target.dataset.networkIndex);
             const networkEl = document.querySelector(`[data-network="${i}"]`);
-            const count = Math.max(1, Math.min(24, Number(valueOf(networkEl, 'network.hostCount')) || 1));
+            const count = Math.max(1, Math.min(48, Number(valueOf(networkEl, 'network.hostCount')) || 1));
             const current = model.networks[i].hosts;
             while (current.length < count) {
               current.push({ id: `h${i + 1}_${current.length + 1}`, name: `${model.networks[i].name}-${current.length + 1}`, type: 'normal-user', image: 'ubuntu:24.04', ssh_enabled: false, username: 'student', password: 'strato', generate_data: false, data_prompt: '', data_content: '' });
@@ -1679,6 +1726,21 @@ INDEX_HTML = r"""<!doctype html>
             }
             const validPairs = new Set(model.networks.flatMap((from) => model.networks.filter((to) => to.id !== from.id).map((to) => `${from.id}->${to.id}`)));
             model.router.firewall.allowed = (model.router.firewall.allowed || []).filter((pair) => validPairs.has(pair));
+            render();
+          }
+          if (action === 'duplicate-network') {
+            collect();
+            const src = model.networks[Number(event.target.dataset.networkIndex)];
+            const copyId = src.id + '-copy';
+            const copy = JSON.parse(JSON.stringify(src));
+            copy.id = copyId;
+            copy.name = (copy.name || src.id) + ' copy';
+            copy.hosts = copy.hosts.map((h, i) => ({ ...h, id: `${copyId}-${i + 1}`, name: `${copy.name}-${i + 1}` }));
+            model.networks.splice(Number(event.target.dataset.networkIndex) + 1, 0, copy);
+            const validPairs = new Set(model.networks.flatMap((from) => model.networks.filter((to) => to.id !== from.id).map((to) => `${from.id}->${to.id}`)));
+            model.router.firewall.allowed = (model.router.firewall.allowed || []).concat(
+              model.networks.filter((n) => n.id !== copyId).map((n) => `${copyId}->${n.id}`)
+            ).filter((pair) => validPairs.has(pair));
             render();
           }
           if (action === 'delete-router') {
@@ -1833,7 +1895,7 @@ def validate_topology(topology):
     networks = topology.get('networks')
     if not isinstance(networks, list) or not networks:
         raise ValueError('At least one network is required.')
-    if len(networks) > 8:
+    if len(networks) > 16:
         raise ValueError('At most 8 networks are supported in this first version.')
 
     seen_networks = set()
@@ -1848,7 +1910,7 @@ def validate_topology(topology):
         hosts = network.get('hosts')
         if not isinstance(hosts, list) or not hosts:
             raise ValueError(f"Network '{network['name']}' needs at least one host.")
-        if len(hosts) > 24:
+        if len(hosts) > 48:
             raise ValueError(f"Network '{network['name']}' has more than 24 hosts.")
         for host_index, host in enumerate(hosts, start=1):
             host['id'] = normalize_identifier(host.get('id'), f'h{index}_{host_index}')
@@ -1860,6 +1922,8 @@ def validate_topology(topology):
             host['generate_data'] = bool(host.get('generate_data'))
             host['data_prompt'] = str(host.get('data_prompt') or '')
             host['data_content'] = str(host.get('data_content') or '')
+            host['cronjobs'] = host.get('cronjobs') if isinstance(host.get('cronjobs'), list) else []
+            host['run_web'] = bool(host.get('run_web'))
         legacy_router_id = network.get('router_id')
         router_ids = network.get('router_ids')
         if not isinstance(router_ids, list):
@@ -2260,20 +2324,47 @@ def generate_compose(topology):
         gateway_ip = network_router_ip_maps[network['id']].get(gateway_router_id, router_ip(network['cidr']))
         for host_index, host in enumerate(network['hosts'], start=1):
             service_name = f'{network["id"]}-{host["id"]}'
-            compose['services'][service_name] = {
-                'image': BASE_IMAGE,
+            host_type = host.get('type', 'normal-user')
+            is_thesis = host_type in THESIS_HOST_TYPES
+            image = host_image(host_type)
+            caps = ['NET_ADMIN', 'NET_RAW', 'SYS_ADMIN'] if host_type == 'slips-peer' else (['NET_ADMIN'] if is_thesis else ['NET_ADMIN'])
+            env_vars = {}
+            if host_type == 'slips-peer':
+                env_vars = {
+                    'OMP_NUM_THREADS': '1', 'MKL_NUM_THREADS': '1',
+                    'KMP_BLOCKTIME': '0', 'OPENBLAS_NUM_THREADS': '1',
+                    'PYTHONSTARTMETHOD': 'spawn',
+                }
+                if host.get('run_web'):
+                    env_vars['RUN_WEB'] = '1'
+            svc = {
+                'image': image,
                 'container_name': f'{project_prefix}-{service_name}',
                 'hostname': host['name'],
-                'cap_add': ['NET_ADMIN'],
-                'command': ['sh', '-lc', host_script(topology, network, host, host_index, gateway_ip)],
+                'cap_add': caps,
                 'networks': {network_key: {'ipv4_address': host_ip(network['cidr'], host_index)}},
                 'labels': [
                     'scl.plugin=network-topology',
                     f'scl.topology={topology["id"]}',
                     f'scl.network={network["id"]}',
-                    f'scl.host_type={host["type"]}',
+                    f'scl.host_type={host_type}',
                 ],
             }
+            if env_vars:
+                svc['environment'] = env_vars
+            cronjobs = host.get('cronjobs') or []
+            if host_type in THESIS_HOST_TYPES:
+                if cronjobs:
+                    cron_script = 'echo "' + '\\n'.join(cronjobs) + '" | crontab - && service cron start && '
+                else:
+                    cron_script = ''
+                svc['command'] = ['sh', '-lc', f'{cron_script}exec /entrypoint.sh || tail -f /dev/null']
+            else:
+                svc['command'] = ['sh', '-lc', host_script(topology, network, host, host_index, gateway_ip)]
+                if cronjobs:
+                    cron_prefix = 'echo "' + '\\n'.join(cronjobs) + '" | crontab - && service cron start; '
+                    svc['command'] = ['sh', '-lc', cron_prefix + host_script(topology, network, host, host_index, gateway_ip)]
+            compose['services'][service_name] = svc
     return compose
 
 
