@@ -11,6 +11,11 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - network-topology-data:/app/data
+    ports:
+      # UI bound to localhost only — never exposed to the network/internet.
+      # Access directly at http://127.0.0.1:9002 or via SSH tunnel from a
+      # remote machine: ssh -L 9002:127.0.0.1:9002 <this-host>
+      - "127.0.0.1:9002:9002"
     networks:
       - playground-net
 
