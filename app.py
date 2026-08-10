@@ -62,39 +62,39 @@ HOST_TYPES = {
     'slips-peer': {
         'label': 'SLIPS IDS Peer',
         'ports': ['22/tcp', '8000/tcp'],
-        'description': 'SLIPS IDS with Zeek, Redis, P2P federation. Uses thesis-slips image.',
+        'description': 'SLIPS IDS with Zeek, Redis, P2P federation. Uses federation_network-slips image.',
     },
     'aracne-attacker': {
         'label': 'Aracne Attacker',
         'ports': ['22/tcp'],
-        'description': 'LLM-driven pentesting agent. Uses thesis-attacker image.',
+        'description': 'LLM-driven pentesting agent. Uses federation_network-attacker image.',
     },
     'pivot': {
         'label': 'SSH Pivot',
         'ports': ['22/tcp'],
-        'description': 'SSH pivot node for lateral movement. Uses thesis-pivot image.',
+        'description': 'SSH pivot node for lateral movement. Uses federation_network-pivot image.',
     },
     'slip-ftp': {
         'label': 'FTP Server',
         'ports': ['21/tcp', '22/tcp'],
-        'description': 'vsftpd FTP server with cron traffic. Uses thesis-ftp image.',
+        'description': 'vsftpd FTP server with cron traffic. Uses federation_network-ftp image.',
     },
     'slip-snmp': {
         'label': 'SNMP / Web',
         'ports': ['161/udp', '8000/tcp', '22/tcp'],
-        'description': 'SNMP agent + Python HTTP server. Uses thesis-snmp image.',
+        'description': 'SNMP agent + Python HTTP server. Uses federation_network-snmp image.',
     },
 }
 
-THESIS_HOST_TYPES = {'slips-peer', 'aracne-attacker', 'pivot', 'slip-ftp', 'slip-snmp'}
+FEDERATION_HOST_TYPES = {'slips-peer', 'aracne-attacker', 'pivot', 'slip-ftp', 'slip-snmp'}
 
 def host_image(host_type):
     return {
-        'slips-peer': 'thesis-slips:latest',
-        'aracne-attacker': 'thesis-attacker:latest',
-        'pivot': 'thesis-pivot:latest',
-        'slip-ftp': 'thesis-ftp:latest',
-        'slip-snmp': 'thesis-snmp:latest',
+        'slips-peer': 'federation_network-slips:latest',
+        'aracne-attacker': 'federation_network-attacker:latest',
+        'pivot': 'federation_network-pivot:latest',
+        'slip-ftp': 'federation_network-ftp:latest',
+        'slip-snmp': 'federation_network-snmp:latest',
     }.get(host_type, BASE_IMAGE)
 
 INDEX_HTML = r"""<!doctype html>
@@ -2336,9 +2336,9 @@ def generate_compose(topology):
         for host_index, host in enumerate(network['hosts'], start=1):
             service_name = f'{network["id"]}-{host["id"]}'
             host_type = host.get('type', 'normal-user')
-            is_thesis = host_type in THESIS_HOST_TYPES
+            is_federation = host_type in FEDERATION_HOST_TYPES
             image = host_image(host_type)
-            caps = ['NET_ADMIN', 'NET_RAW', 'SYS_ADMIN'] if host_type == 'slips-peer' else (['NET_ADMIN'] if is_thesis else ['NET_ADMIN'])
+            caps = ['NET_ADMIN', 'NET_RAW', 'SYS_ADMIN'] if host_type == 'slips-peer' else (['NET_ADMIN'] if is_federation else ['NET_ADMIN'])
             env_vars = {}
             if host_type == 'slips-peer':
                 env_vars = {
@@ -2364,7 +2364,7 @@ def generate_compose(topology):
             if env_vars:
                 svc['environment'] = env_vars
             cronjobs = host.get('cronjobs') or []
-            if host_type in THESIS_HOST_TYPES:
+            if host_type in FEDERATION_HOST_TYPES:
                 svc['stop_grace_period'] = '30s'
                 if cronjobs:
                     cron_script = 'echo "' + '\\n'.join(cronjobs) + '" | crontab - 2>/dev/null; service cron start 2>/dev/null; '

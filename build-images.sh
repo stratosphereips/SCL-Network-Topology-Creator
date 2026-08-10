@@ -1,33 +1,32 @@
 #!/usr/bin/env bash
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-THESIS_DIR="${1:-$HOME/thesis_project}"
+PROJECT_DIR="${1:-$HOME/thesis_project}"
 
-echo "=== Building thesis Docker images for network topology plugin ==="
+echo "=== Building federation_network Docker images for network topology plugin ==="
 
-cd "$THESIS_DIR"
+cd "$PROJECT_DIR"
 
-echo "[thesis-slips]"
+echo "[federation_network-slips]"
 docker compose -f docker-compose.yml build slips-1 2>&1 | tail -3
-docker tag scl-custom_challenge-slips thesis-slips:latest
-docker tag scl-custom_challenge-slips-slips_base thesis-slips-base:latest
+docker tag scl-custom_challenge-slips federation_network-slips:latest
 
-echo "[thesis-attacker]"
+echo "[federation_network-attacker]"
 docker compose -f docker-compose.yml build attacker 2>&1 | tail -3
-docker tag scl-custom_challenge-attacker thesis-attacker:latest
+docker tag scl-custom_challenge-attacker federation_network-attacker:latest
 
-echo "[thesis-pivot]"
+echo "[federation_network-pivot]"
 docker compose -f docker-compose.yml build connect 2>&1 | tail -3
-docker tag scl-custom_challenge-connect thesis-pivot:latest
+docker tag scl-custom_challenge-connect federation_network-pivot:latest
 
-echo "[thesis-ftp]"
+echo "[federation_network-ftp]"
 docker compose -f docker-compose.yml build ubuntu-1 2>&1 | tail -3
-docker tag scl-custom_challenge-ftp thesis-ftp:latest
+docker tag scl-custom_challenge-ftp federation_network-ftp:latest
 
-echo "[thesis-snmp]"
+echo "[federation_network-snmp]"
 docker compose -f docker-compose.yml build ubuntu-2 2>&1 | tail -3
-docker tag scl-custom_challenge-snmp thesis-snmp:latest
+docker tag scl-custom_challenge-snmp federation_network-snmp:latest
 
 echo ""
-echo "=== All thesis images tagged ==="
-docker images --format '{{.Repository}}:{{.Tag}}' | grep '^thesis-'
+echo "=== All federation_network images tagged ==="
+docker images --format '{{.Repository}}:{{.Tag}}' | grep '^federation_network-'
