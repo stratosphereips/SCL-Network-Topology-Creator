@@ -211,6 +211,43 @@ def _connection_cron_lines(topology, profile):
         lines.append(f"{ct['interval']} {command}")
     return lines
 
+
+# Config is the single source of truth for a node. The plugin bakes a
+# bash-sourcable file (node.conf) into the container at boot (via its
+# entrypoint) — no per-node environment variables, no host bind-mounts.
+NODE_CONFIG_PATH = '/opt/network-setup/node.conf'
+
+
+def node_config(topology, host, profile, peer_names):
+    """Return the node.conf content (bash-sourcable) encoding a node's setup."""
+    profile = profile or {}
+    out = []
+    if profile.get('slips_variant', 'none') != 'none':
+        sv = profile['slips_variant']
+        if sv in SLIPS_PROFILES:
+            out.append(f'SLIPS_PROFILE={sv}')
+        if peer_names:
+            out.append(f"SLIPS_PEERS='{','.join(peer_names)}'")
+        if host.get('run_web'):
+            out.append('RUN_WEB=1')
+    if profile.get('services'):
+        out.append(f"SERVICES='{','.join(profile['services'])}'")
+    cron = [line for line in (host.get('cronjobs') or []) + _connection_cron_lines(topology, profile) if line.strip()]
+    if cron:
+        out.append(f"EXTRA_CRON='{chr(10).join(cron)}'")
+    return '\n'.join(out) + ('\n' if out else '')
+
+
+def peer_names_of(topology):
+    """Hostnames of all sensor peers (used to populate SLIPS_PEERS)."""
+    return [
+        h['name']
+        for net in topology.get('networks', [])
+        for h in net.get('hosts', [])
+        if (h.get('profile') or {}).get('slips_variant', 'none') != 'none'
+    ]
+
+
 INDEX_HTML = r"""<!doctype html>
 <html lang="en">
   <head>
@@ -2519,29 +2556,6 @@ def generate_compose(topology):
             is_sensor = profile.get('slips_variant', 'none') != 'none'
             image = node_image(profile)
             caps = ['NET_ADMIN', 'NET_RAW', 'SYS_ADMIN'] if is_sensor else ['NET_ADMIN']
-            env_vars = {}
-            if is_sensor:
-                env_vars = {
-                    'OMP_NUM_THREADS': '1', 'MKL_NUM_THREADS': '1',
-                    'KMP_BLOCKTIME': '0', 'OPENBLAS_NUM_THREADS': '1',
-                    'PYTHONSTARTMETHOD': 'spawn',
-                }
-                if host.get('run_web'):
-                    env_vars['RUN_WEB'] = '1'
-                slips_variant = profile.get('slips_variant', 'none')
-                if slips_variant != 'none' and slips_variant in SLIPS_PROFILES:
-                    env_vars['SLIPS_PROFILE'] = slips_variant
-                # Tell every sensor peer who all the peers are.
-                peer_names = [
-                    h['name']
-                    for net in topology.get('networks', [])
-                    for h in net.get('hosts', [])
-                    if (h.get('profile') or {}).get('slips_variant', 'none') != 'none'
-                ]
-                if peer_names:
-                    env_vars['SLIPS_PEERS'] = ','.join(peer_names)
-            if profile.get('services'):
-                env_vars['SERVICES'] = ','.join(profile['services'])
             svc = {
                 'image': image,
                 'container_name': f'{project_prefix}-{service_name}',
@@ -2555,29 +2569,28 @@ def generate_compose(topology):
                     f'scl.host_type={"sensor" if is_sensor else ("service" if managed else host.get("type", "host"))}',
                 ],
             }
-            if env_vars:
-                svc['environment'] = env_vars
-            # Bake SLIPS capacity from the selected variant (strong/middle/weak).
+            # SLIPS capacity from the selected variant (strong/middle/weak).
             if is_sensor:
                 resources = SLIPS_PROFILES.get(profile.get('slips_variant', 'none'), {}).get('resources') or {}
                 if resources.get('cpus'):
                     svc['cpus'] = resources['cpus']
                 if resources.get('mem'):
                     svc['mem_limit'] = resources['mem']
-            # Assemble crontab lines: literal cronjobs + expanded connection profile.
-            cron_lines = list(host.get('cronjobs') or [])
-            cron_lines += _connection_cron_lines(topology, profile)
-            cronjobs = [line for line in cron_lines if line.strip()]
             if managed:
+                # Node setup is baked into node.conf (the single source of truth)
+                # at boot via the entrypoint — no env vars, no host bind-mounts.
+                content = node_config(topology, host, profile, peer_names_of(topology))
+                write_block = (
+                    f"mkdir -p /opt/network-setup && "
+                    f"cat > {NODE_CONFIG_PATH} <<'EOF'\n{content}EOF\n"
+                )
                 svc['stop_grace_period'] = '30s'
-                if cronjobs:
-                    # Pass traffic crontab lines to the runtime entrypoint, which
-                    # merges them into its own crontab (avoids clobbering).
-                    env_vars['EXTRA_CRON'] = '\n'.join(cronjobs)
-                    svc['command'] = ['sh', '-lc', f'service cron start 2>/dev/null; {node_entrypoint(profile)}']
-                # else: native ENTRYPOINT of the (slips / service) runtime image
+                svc['entrypoint'] = ['sh', '-lc', f"{write_block}exec {node_entrypoint(profile)}"]
             else:
                 svc['command'] = ['sh', '-lc', host_script(topology, network, host, host_index, gateway_ip)]
+                cron_lines = list(host.get('cronjobs') or [])
+                cron_lines += _connection_cron_lines(topology, profile)
+                cronjobs = [line for line in cron_lines if line.strip()]
                 if cronjobs:
                     cron_prefix = 'echo "' + '\\n'.join(cronjobs) + '" | crontab - 2>/dev/null; service cron start 2>/dev/null; '
                     svc['command'] = ['sh', '-lc', cron_prefix + host_script(topology, network, host, host_index, gateway_ip)]

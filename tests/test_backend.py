@@ -114,12 +114,25 @@ def test_validate_topology_at_most_one_attacker_pivot():
 
 
 # --------------------------------------------------------------------------
-# generate_compose — the docker config baking
+# generate_compose — the docker config baking (config file, not env)
 # --------------------------------------------------------------------------
 def _generate():
     valid = app.validate_topology(_basic_topology())
     valid["id"] = "test-lab"
     return app.generate_compose(valid)
+
+
+def _config(service_name):
+    # Build topology same way, then read the node_config for a service.
+    valid = app.validate_topology(_basic_topology())
+    valid["id"] = "test-lab"
+    peers = [h["name"] for net in valid["networks"] for h in net["hosts"]
+             if h["profile"]["slips_variant"] != "none"]
+    for net in valid["networks"]:
+        for host in net["hosts"]:
+            if f'{net["id"]}-{host["id"]}' == service_name:
+                return app.node_config(valid, host, host["profile"], peers)
+    raise KeyError(service_name)
 
 
 def test_generate_compose_images_from_profile():
@@ -130,65 +143,62 @@ def test_generate_compose_images_from_profile():
     assert comp["services"]["slip-net-n1"]["image"] == app.SERVICE_RUNTIME_IMAGE
 
 
-def test_generate_compose_sensor_env_and_resources():
+def test_generate_compose_no_env_for_managed_nodes():
+    # Config is the only source of truth: managed nodes must NOT get node setup
+    # as environment variables.
+    for name in ("slip-net-s1", "slip-net-s2", "slip-net-f1", "slip-net-n1"):
+        svc = _generate()["services"][name]
+        env = svc.get("environment", {})
+        for key in ("SLIPS_PROFILE", "SLIPS_PEERS", "SERVICES", "EXTRA_CRON", "RUN_WEB"):
+            assert key not in env, f"{name} leaked env var {key}"
+
+
+def test_generate_compose_managed_nodes_bake_config_via_entrypoint():
+    comp = _generate()
+    for name in ("slip-net-s1", "slip-net-s2", "slip-net-f1", "slip-net-n1"):
+        svc = comp["services"][name]
+        # config is embedded in the entrypoint (writes node.conf then runs runtime)
+        ep = " ".join(svc["entrypoint"])
+        assert app.NODE_CONFIG_PATH in ep
+        # no env vars, no bind-mounts
+        assert "environment" not in svc
+        assert "volumes" not in svc
+
+
+def test_node_config_sensor():
+    c = _config("slip-net-s1")
+    assert "SLIPS_PROFILE=weak" in c
+    assert "SLIPS_PEERS='slips-1,slips-2'" in c  # only sensors
+    assert "RUN_WEB=1" in c
+    assert "EXTRA_CRON='" in c and "internet-traffic.sh wikipedia" in c
+    # sensor with no traffic lines leaves EXTRA_CRON out
+    assert "EXTRA_CRON" not in _config("slip-net-s2")
+
+
+def test_node_config_service_and_internal_target():
+    c = _config("slip-net-n1")
+    assert "SERVICES='snmp'" in c
+    assert "check-ftp.sh ftp-1" in c  # internal target resolved to service host
+    assert "SLIPS_PROFILE" not in c
+
+
+def test_node_config_resources_capacity():
     s1 = _generate()["services"]["slip-net-s1"]
-    env = s1.get("environment", {})
-    assert env.get("SLIPS_PROFILE") == "weak"
-    assert env.get("SLIPS_PEERS") == "slips-1,slips-2"  # only sensors
-    assert env.get("RUN_WEB") == "1"
-    assert s1["cpus"] == 1 and s1["mem_limit"] == "2g"  # weak resources
+    assert s1["cpus"] == 1 and s1["mem_limit"] == "2g"  # weak
+    s2 = _generate()["services"]["slip-net-s2"]
+    assert s2["cpus"] == 4 and s2["mem_limit"] == "8g"  # strong
     assert s1["cap_add"] == ["NET_ADMIN", "NET_RAW", "SYS_ADMIN"]
 
 
-def test_generate_compose_service_env():
-    f1 = _generate()["services"]["slip-net-f1"]
-    assert f1.get("environment", {}).get("SERVICES") == "ftp"
-    assert f1.get("cap_add") == ["NET_ADMIN"]
-
-
-def test_generate_compose_internal_target_resolution():
-    # snmp-1 has internal connection ftp_check -> resolves to ftp-1 hostname,
-    # delivered to the entrypoint via EXTRA_CRON so it isn't clobbered.
-    n1 = _generate()["services"]["slip-net-n1"]
-    extra = n1.get("environment", {}).get("EXTRA_CRON", "")
-    assert "check-ftp.sh ftp-1" in extra
-
-
-def test_generate_compose_cron_only_when_present():
+def test_generate_compose_all_hosts_present():
     comp = _generate()
-    assert "internet-traffic.sh wikipedia" in comp["services"]["slip-net-s1"]["environment"]["EXTRA_CRON"]
-    # slips-2 has no connections -> no EXTRA_CRON, no command override
-    assert "EXTRA_CRON" not in comp["services"]["slip-net-s2"].get("environment", {})
-    assert comp["services"]["slip-net-s2"].get("command") is None
+    for key in ("slip-net-s1", "slip-net-s2", "slip-net-f1", "slip-net-n1"):
+        assert key in comp["services"]
 
 
-def test_generate_compose_cron_not_clobbered_by_entrypoint():
-    """Regression: connection crontab lines must reach the container.
-
-    Previously the plugin wrote the crontab inline in the command, which the
-    image entrypoint then overwrote with its own crontab (clobbering the baked
-    traffic). Now the crontab is passed to the entrypoint via EXTRA_CRON so it
-    merges rather than replaces.
-    """
-    comp = _generate()
-
-    # Sensor with a connection: EXTRA_CRON carries the resolved traffic line,
-    # and the command must NOT itself write crontab (entrypoint merges it).
-    s1 = comp["services"]["slip-net-s1"]
-    assert "EXTRA_CRON" in s1.get("environment", {})
-    assert "internet-traffic.sh wikipedia" in s1["environment"]["EXTRA_CRON"]
-    assert "crontab" not in s1["command"][-1]
-
-    # Service host with an internal connection: EXTRA_CRON has the resolved
-    # target (service role -> real hostname), so it survives the entrypoint.
-    n1 = comp["services"]["slip-net-n1"]
-    assert "EXTRA_CRON" in n1.get("environment", {})
-    assert "check-ftp.sh ftp-1" in n1["environment"]["EXTRA_CRON"]
-    assert "crontab" not in n1["command"][-1]
-
-    # A managed node with no traffic leaves no EXTRA_CRON.
-    s2 = comp["services"]["slip-net-s2"]
-    assert "EXTRA_CRON" not in s2.get("environment", {})
+def test_managed_nodes_have_no_environment_at_all():
+    for name in ("slip-net-s1", "slip-net-s2", "slip-net-f1", "slip-net-n1"):
+        assert "environment" not in _generate()["services"][name]
 
 
 def test_generate_compose_networks_created():
