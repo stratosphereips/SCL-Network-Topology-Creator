@@ -1,21 +1,9 @@
 # Basic backend unit tests for the topology creator.
-# Purpose: catch regressions in the core logic (image mapping, entrypoint
-# selection, validate_topology normalization, and generate_compose output).
-import json
-import os
-
+# Purpose: catch regressions in the core logic (profile→image/config baking,
+# validate_topology normalization, and generate_compose output).
 import pytest
 
 import app
-
-
-FED_TYPES = {
-    "slips-peer": "federation_network-slips:latest",
-    "aracne-attacker": "federation_network-attacker:latest",
-    "pivot": "federation_network-pivot:latest",
-    "slip-ftp": "federation_network-ftp:latest",
-    "slip-snmp": "federation_network-snmp:latest",
-}
 
 
 def _basic_topology():
@@ -28,85 +16,101 @@ def _basic_topology():
                 "cidr": "10.77.1.0/24",
                 "hosts": [
                     {
-                        "id": "s1",
-                        "name": "slips-1",
-                        "type": "slips-peer",
+                        "id": "s1", "name": "slips-1", "type": "normal-user",
                         "run_web": True,
-                        "cronjobs": ["*/2 * * * * curl -s http://10.77.2.11/ >/dev/null"],
+                        "profile": {"slips_variant": "weak", "attacker_pivot": False,
+                                    "services": [], "connections": ["wikipedia"], "internal": []},
                     },
-                    {"id": "s2", "name": "slips-2", "type": "slips-peer"},
+                    {"id": "s2", "name": "slips-2", "type": "normal-user",
+                     "profile": {"slips_variant": "strong", "attacker_pivot": False,
+                                 "services": [], "connections": [], "internal": []}},
+                    {"id": "f1", "name": "ftp-1", "type": "normal-user",
+                     "profile": {"slips_variant": "none", "attacker_pivot": False,
+                                 "services": ["ftp"], "connections": [], "internal": []}},
+                    {"id": "n1", "name": "snmp-1", "type": "normal-user",
+                     "profile": {"slips_variant": "none", "attacker_pivot": False,
+                                 "services": ["snmp"], "connections": [], "internal": ["ftp_check"]}},
                 ],
-            },
-            {
-                "id": "victim",
-                "name": "Victims",
-                "cidr": "10.77.2.0/24",
-                "hosts": [
-                    {"id": "f1", "name": "ubuntu-1", "type": "slip-ftp"},
-                    {"id": "n1", "name": "snmp-1", "type": "slip-snmp"},
-                ],
-            },
+            }
         ],
         "routers": [{"id": "r1", "name": "core"}],
     }
 
 
 # --------------------------------------------------------------------------
-# host_image
+# node_image / node_entrypoint — composed from the profile, not a type enum
 # --------------------------------------------------------------------------
-def test_host_image_known_types():
-    for host_type, expected in FED_TYPES.items():
-        assert app.host_image(host_type) == expected
+def test_node_image_sensor():
+    assert app.node_image({"slips_variant": "weak"}) == app.SLIPS_RUNTIME_IMAGE
+    assert app.node_image({"slips_variant": "strong"}) == app.SLIPS_RUNTIME_IMAGE
 
 
-def test_host_image_unknown_type_falls_back_to_base():
-    assert app.host_image("ftp") == app.BASE_IMAGE
-    assert app.host_image("") == app.BASE_IMAGE
+def test_node_image_service():
+    assert app.node_image({"slips_variant": "none", "services": ["ftp"]}) == app.SERVICE_RUNTIME_IMAGE
 
 
-# --------------------------------------------------------------------------
-# host_entrypoint_cmd
-# --------------------------------------------------------------------------
-def test_entrypoint_cmd_by_type():
-    assert app.host_entrypoint_cmd("pivot") == "/usr/sbin/sshd -D"
-    assert app.host_entrypoint_cmd("slips-peer") == "/usr/local/bin/slips-entrypoint.sh"
-    assert app.host_entrypoint_cmd("aracne-attacker") == "/entrypoint.sh"
-    assert app.host_entrypoint_cmd("anything-else") == "tail -f /dev/null"
+def test_node_image_plain():
+    assert app.node_image({}) == app.BASE_IMAGE
+    assert app.node_image({"slips_variant": "none", "services": []}) == app.BASE_IMAGE
 
 
-# --------------------------------------------------------------------------
-# FEDERATION_HOST_TYPES registry
-# --------------------------------------------------------------------------
-def test_federation_host_types_contains_all_custom_types():
-    assert set(app.FEDERATION_HOST_TYPES) == set(FED_TYPES.keys())
+def test_node_entrypoint():
+    assert app.node_entrypoint({"slips_variant": "weak"}) == "/usr/local/bin/slips-entrypoint.sh"
+    assert app.node_entrypoint({"services": ["snmp"]}) == "/usr/local/bin/service-entrypoint.sh"
+    assert app.node_entrypoint({}) is None
 
 
-def test_all_federation_types_present_in_host_types():
-    for host_type in app.FEDERATION_HOST_TYPES:
-        assert host_type in app.HOST_TYPES
+def test_is_managed_node():
+    assert app.is_managed_node({"slips_variant": "weak"}) is True
+    assert app.is_managed_node({"services": ["ftp"]}) is True
+    assert app.is_managed_node({}) is False
+
+
+def test_no_fused_federation_types_remain():
+    # There are no slips-ftp / slips-peer / pivot type enums anymore.
+    for fused in ("slips-peer", "slip-ftp", "slip-snmp", "pivot", "aracne-attacker"):
+        assert fused not in app.HOST_TYPES
 
 
 # --------------------------------------------------------------------------
 # validate_topology
 # --------------------------------------------------------------------------
-def test_validate_topology_basic():
+def test_validate_topology_basic_and_profile():
     valid = app.validate_topology(_basic_topology())
-    assert len(valid["networks"]) == 2
-    assert valid["networks"][0]["hosts"][0]["type"] == "slips-peer"
-    # ids normalized / defaulted
-    assert valid["networks"][0]["default_router_id"]
-    # unknown host type is coerced to normal-user
-    unknown = {"id": "x", "name": "x", "type": "does-not-exist"}
-    n = app.validate_topology({
-        "name": "t",
-        "networks": [{"id": "n", "cidr": "10.77.9.0/24", "hosts": [unknown]}],
-    })
-    assert n["networks"][0]["hosts"][0]["type"] == "normal-user"
+    assert len(valid["networks"]) == 1
+    assert valid["networks"][0]["hosts"][0]["profile"]["slips_variant"] == "weak"
+    assert valid["networks"][0]["hosts"][2]["profile"]["services"] == ["ftp"]
 
 
 def test_validate_topology_requires_name():
     with pytest.raises(ValueError):
         app.validate_topology({"networks": []})
+
+
+def test_validate_topology_unknown_profile_fields_dropped():
+    t = {
+        "name": "t",
+        "networks": [{"id": "n", "cidr": "10.77.9.0/24", "hosts": [
+            {"id": "h", "profile": {"slips_variant": "bogus-tier",
+                                    "services": ["nope"], "connections": ["wikipedia"], "internal": []}}
+        ]}],
+    }
+    valid = app.validate_topology(t)
+    p = valid["networks"][0]["hosts"][0]["profile"]
+    assert p["slips_variant"] == "none"  # unknown variant -> none
+    assert p["services"] == []           # unknown service -> dropped
+
+
+def test_validate_topology_at_most_one_attacker_pivot():
+    t = {
+        "name": "t",
+        "networks": [{"id": "n", "cidr": "10.77.9.0/24", "hosts": [
+            {"id": "a", "profile": {"attacker_pivot": True}},
+            {"id": "b", "profile": {"attacker_pivot": True}},
+        ]}],
+    }
+    with pytest.raises(ValueError, match="attacker pivot"):
+        app.validate_topology(t)
 
 
 # --------------------------------------------------------------------------
@@ -118,40 +122,51 @@ def _generate():
     return app.generate_compose(valid)
 
 
-def test_generate_compose_network_images():
+def test_generate_compose_images_from_profile():
     comp = _generate()
-    assert comp["services"]["slip-net-s1"]["image"] == "federation_network-slips:latest"
-    assert comp["services"]["slip-net-s2"]["image"] == "federation_network-slips:latest"
-    assert comp["services"]["victim-f1"]["image"] == "federation_network-ftp:latest"
-    assert comp["services"]["victim-n1"]["image"] == "federation_network-snmp:latest"
+    assert comp["services"]["slip-net-s1"]["image"] == app.SLIPS_RUNTIME_IMAGE
+    assert comp["services"]["slip-net-s2"]["image"] == app.SLIPS_RUNTIME_IMAGE
+    assert comp["services"]["slip-net-f1"]["image"] == app.SERVICE_RUNTIME_IMAGE
+    assert comp["services"]["slip-net-n1"]["image"] == app.SERVICE_RUNTIME_IMAGE
 
 
-def test_generate_compose_slips_caps_and_env():
+def test_generate_compose_sensor_env_and_resources():
     s1 = _generate()["services"]["slip-net-s1"]
-    assert s1["cap_add"] == ["NET_ADMIN", "NET_RAW", "SYS_ADMIN"]
     env = s1.get("environment", {})
-    assert env.get("PYTHONSTARTMETHOD") == "spawn"
+    assert env.get("SLIPS_PROFILE") == "weak"
+    assert env.get("SLIPS_PEERS") == "slips-1,slips-2"  # only sensors
     assert env.get("RUN_WEB") == "1"
+    assert s1["cpus"] == 1 and s1["mem_limit"] == "2g"  # weak resources
+    assert s1["cap_add"] == ["NET_ADMIN", "NET_RAW", "SYS_ADMIN"]
+
+
+def test_generate_compose_service_env():
+    f1 = _generate()["services"]["slip-net-f1"]
+    assert f1.get("environment", {}).get("SERVICES") == "ftp"
+    assert f1.get("cap_add") == ["NET_ADMIN"]
+
+
+def test_generate_compose_internal_target_resolution():
+    # snmp-1 has internal connection ftp_check -> resolves to ftp-1 hostname
+    n1 = _generate()["services"]["slip-net-n1"]
+    cmd = n1.get("command")
+    assert cmd is not None
+    assert "check-ftp.sh ftp-1" in cmd[-1]
 
 
 def test_generate_compose_cron_only_when_present():
     comp = _generate()
-    # host with cronjobs gets a wrapped command
-    assert comp["services"]["slip-net-s1"].get("command") is not None
-    assert "*/2 * * * * curl" in comp["services"]["slip-net-s1"]["command"][-1]
-    # host without cronjobs keeps native startup (no command override)
+    assert "*/5 * * * * internet-traffic.sh wikipedia" in comp["services"]["slip-net-s1"]["command"][-1]
+    # slips-2 has no connections -> native entrypoint, no command override
     assert comp["services"]["slip-net-s2"].get("command") is None
 
 
 def test_generate_compose_networks_created():
     comp = _generate()
-    nets = [k for k in comp["networks"] if k != "playground-net"]
-    assert len(nets) == 2
-    assert "topo_slip-net" in nets
-    assert "topo_victim" in nets
+    assert "topo_slip-net" in comp["networks"]
 
 
 def test_generate_compose_all_hosts_present():
     comp = _generate()
-    for key in ("slip-net-s1", "slip-net-s2", "victim-f1", "victim-n1"):
+    for key in ("slip-net-s1", "slip-net-s2", "slip-net-f1", "slip-net-n1"):
         assert key in comp["services"]

@@ -53,9 +53,11 @@ def test_ui_serves_and_injects_types(server):
     status, parsed, html = server("GET", "/")
     assert status == 200
     assert "<title>Network Topology Builder</title>" in html
-    # __HOST_TYPES__ replaced at serve time; federation labels should be visible
-    assert "SLIPS IDS Peer" in html
-    assert "Aracne Attacker" in html
+    # __<REGISTRY>__ placeholders replaced at serve time; a connection id should
+    # now be visible in the injected JS.
+    assert "__SLIPS_PROFILES__" not in html
+    assert "ftp_check" in html
+    assert 'data-field="profile.slips_variant"' in html
 
 
 def test_list_topologies_is_json(server):

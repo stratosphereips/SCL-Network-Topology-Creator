@@ -44,16 +44,23 @@ def test_host_types_injection_is_valid_json():
     m = re.search(r"const HOST_TYPES\s*=\s*(\{.*?\});", rendered, re.DOTALL)
     assert m, "could not locate HOST_TYPES assignment"
     types = json.loads(m.group(1))
-    for host_type in app.FEDERATION_HOST_TYPES:
-        assert host_type in types
+    # generic roles remain; no fused federation types
+    for role in app.GENERIC_ROLES:
+        assert role in types
+    for fused in ("slips-peer", "slip-ftp", "slip-snmp", "pivot", "aracne-attacker"):
+        assert fused not in types
 
 
-def test_federation_types_present_in_ui_html():
-    # Labels/options are injected via the __HOST_TYPES__ JSON at serve time,
-    # so assert against the HOST_TYPES registry (the injection source).
-    labels = [info["label"] for info in app.HOST_TYPES.values()]
-    for expected in ["SLIPS IDS Peer", "Aracne Attacker", "SSH Pivot", "FTP Server", "SNMP / Web"]:
-        assert expected in labels, f"missing label: {expected}"
+def test_profile_registries_present_in_ui_html():
+    # slips/services/connections are injected into the JS at serve time
+    assert "SLIPS_PROFILES" in app.INDEX_HTML
+    assert "SERVICES" in app.INDEX_HTML
+    assert "CONNECTION_TYPES" in app.INDEX_HTML
+    # the profile editor is wired (slips_variant literal; services via profChecks)
+    assert 'data-field="profile.slips_variant"' in app.INDEX_HTML
+    assert "profile.services" in app.INDEX_HTML
+    assert "profile.connections" in app.INDEX_HTML
+    assert "profile.internal" in app.INDEX_HTML
 
 
 def test_required_dom_ids_present():

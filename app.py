@@ -59,43 +59,42 @@ HOST_TYPES = {
         'ports': ['514/tcp'],
         'description': 'Host prepared with log files for investigation.',
     },
-    'slips-peer': {
-        'label': 'SLIPS IDS Peer',
-        'ports': ['22/tcp', '8000/tcp'],
-        'description': 'SLIPS IDS with Zeek, Redis, P2P federation. Uses federation_network-slips image.',
-    },
-    'aracne-attacker': {
-        'label': 'Aracne Attacker',
-        'ports': ['22/tcp'],
-        'description': 'LLM-driven pentesting agent. Uses federation_network-attacker image.',
-    },
-    'pivot': {
-        'label': 'SSH Pivot',
-        'ports': ['22/tcp'],
-        'description': 'SSH pivot node for lateral movement. Uses federation_network-pivot image.',
-    },
-    'slip-ftp': {
-        'label': 'FTP Server',
-        'ports': ['21/tcp', '22/tcp'],
-        'description': 'vsftpd FTP server with cron traffic. Uses federation_network-ftp image.',
-    },
-    'slip-snmp': {
-        'label': 'SNMP / Web',
-        'ports': ['161/udp', '8000/tcp', '22/tcp'],
-        'description': 'SNMP agent + Python HTTP server. Uses federation_network-snmp image.',
-    },
 }
 
-FEDERATION_HOST_TYPES = {'slips-peer', 'aracne-attacker', 'pivot', 'slip-ftp', 'slip-snmp'}
+# Generic (plain base-image) role types — still driven by `type` + host_script.
+GENERIC_ROLES = {'web-server', 'db', 'file-server', 'domain-admin', 'normal-user', 'jump-box', 'log-server'}
+
+SLIPS_RUNTIME_IMAGE = 'federation_network-slips:latest'
+SERVICE_RUNTIME_IMAGE = 'federation_network-service:latest'
+
 
 def host_image(host_type):
-    return {
-        'slips-peer': 'federation_network-slips:latest',
-        'aracne-attacker': 'federation_network-attacker:latest',
-        'pivot': 'federation_network-pivot:latest',
-        'slip-ftp': 'federation_network-ftp:latest',
-        'slip-snmp': 'federation_network-snmp:latest',
-    }.get(host_type, BASE_IMAGE)
+    return BASE_IMAGE
+
+
+def node_image(profile):
+    """Compose a node's image from its settings — no fused per-role type."""
+    profile = profile or {}
+    if profile.get('slips_variant', 'none') != 'none':
+        return SLIPS_RUNTIME_IMAGE
+    if profile.get('services'):
+        return SERVICE_RUNTIME_IMAGE
+    return BASE_IMAGE
+
+
+def node_entrypoint(profile):
+    profile = profile or {}
+    if profile.get('slips_variant', 'none') != 'none':
+        return '/usr/local/bin/slips-entrypoint.sh'
+    if profile.get('services'):
+        return '/usr/local/bin/service-entrypoint.sh'
+    return None
+
+
+def is_managed_node(profile):
+    """A node is 'managed' (profile-composed) if it is a sensor or hosts services."""
+    profile = profile or {}
+    return profile.get('slips_variant', 'none') != 'none' or bool(profile.get('services'))
 
 
 # Profile registries. Adding a new slips variant / service / connection type
@@ -1232,7 +1231,7 @@ INDEX_HTML = r"""<!doctype html>
                   <span>Enable SSH on this host</span>
                 </label>
               </div>
-              ${host.type === 'slips-peer' ? `<div class="span-12"><label class="checkbox-line">
+              ${profile.slips_variant !== 'none' ? `<div class="span-12"><label class="checkbox-line">
                 <input data-field="host.run_web" type="checkbox" ${host.run_web ? 'checked' : ''}>
                 <span>Run web traffic generator (cron job)</span>
               </label></div>` : ''}
@@ -2404,13 +2403,7 @@ nft -f /tmp/router-rules.nft || true
 
 
 def host_entrypoint_cmd(host_type):
-    """Return a shell command that mimics the image's native startup for cron-injected hosts."""
-    if host_type == 'pivot':
-        return '/usr/sbin/sshd -D'
-    if host_type == 'slips-peer':
-        return '/usr/local/bin/slips-entrypoint.sh'
-    if host_type == 'aracne-attacker':
-        return '/entrypoint.sh'
+    """Return a native startup command for a plain generic-role host."""
     return 'tail -f /dev/null'
 
 
@@ -2521,13 +2514,13 @@ def generate_compose(topology):
         gateway_ip = network_router_ip_maps[network['id']].get(gateway_router_id, router_ip(network['cidr']))
         for host_index, host in enumerate(network['hosts'], start=1):
             service_name = f'{network["id"]}-{host["id"]}'
-            host_type = host.get('type', 'normal-user')
-            is_federation = host_type in FEDERATION_HOST_TYPES
-            image = host_image(host_type)
             profile = host.get('profile') or {}
-            caps = ['NET_ADMIN', 'NET_RAW', 'SYS_ADMIN'] if host_type == 'slips-peer' else (['NET_ADMIN'] if is_federation else ['NET_ADMIN'])
+            managed = is_managed_node(profile)
+            is_sensor = profile.get('slips_variant', 'none') != 'none'
+            image = node_image(profile)
+            caps = ['NET_ADMIN', 'NET_RAW', 'SYS_ADMIN'] if is_sensor else ['NET_ADMIN']
             env_vars = {}
-            if host_type == 'slips-peer':
+            if is_sensor:
                 env_vars = {
                     'OMP_NUM_THREADS': '1', 'MKL_NUM_THREADS': '1',
                     'KMP_BLOCKTIME': '0', 'OPENBLAS_NUM_THREADS': '1',
@@ -2538,15 +2531,17 @@ def generate_compose(topology):
                 slips_variant = profile.get('slips_variant', 'none')
                 if slips_variant != 'none' and slips_variant in SLIPS_PROFILES:
                     env_vars['SLIPS_PROFILE'] = slips_variant
-                # Tell every peer who all the peers are (no hardcoded addresses).
+                # Tell every sensor peer who all the peers are.
                 peer_names = [
                     h['name']
                     for net in topology.get('networks', [])
                     for h in net.get('hosts', [])
-                    if h.get('type') == 'slips-peer'
+                    if (h.get('profile') or {}).get('slips_variant', 'none') != 'none'
                 ]
                 if peer_names:
                     env_vars['SLIPS_PEERS'] = ','.join(peer_names)
+            if profile.get('services'):
+                env_vars['SERVICES'] = ','.join(profile['services'])
             svc = {
                 'image': image,
                 'container_name': f'{project_prefix}-{service_name}',
@@ -2557,13 +2552,13 @@ def generate_compose(topology):
                     'scl.plugin=network-topology',
                     f'scl.topology={topology["id"]}',
                     f'scl.network={network["id"]}',
-                    f'scl.host_type={host_type}',
+                    f'scl.host_type={"sensor" if is_sensor else ("service" if managed else host.get("type", "host"))}',
                 ],
             }
             if env_vars:
                 svc['environment'] = env_vars
             # Bake SLIPS capacity from the selected variant (strong/middle/weak).
-            if host_type == 'slips-peer':
+            if is_sensor:
                 resources = SLIPS_PROFILES.get(profile.get('slips_variant', 'none'), {}).get('resources') or {}
                 if resources.get('cpus'):
                     svc['cpus'] = resources['cpus']
@@ -2573,13 +2568,12 @@ def generate_compose(topology):
             cron_lines = list(host.get('cronjobs') or [])
             cron_lines += _connection_cron_lines(topology, profile)
             cronjobs = [line for line in cron_lines if line.strip()]
-            if host_type in FEDERATION_HOST_TYPES:
+            if managed:
                 svc['stop_grace_period'] = '30s'
                 if cronjobs:
                     cron_script = 'echo "' + '\\n'.join(cronjobs) + '" | crontab - 2>/dev/null; service cron start 2>/dev/null; '
-                    svc['command'] = ['sh', '-lc', f'{cron_script}{host_entrypoint_cmd(host_type)}']
-                elif host_type in ('slips-peer', 'aracne-attacker'):
-                    pass
+                    svc['command'] = ['sh', '-lc', f'{cron_script}{node_entrypoint(profile)}']
+                # else: native ENTRYPOINT of the (slips / service) runtime image
             else:
                 svc['command'] = ['sh', '-lc', host_script(topology, network, host, host_index, gateway_ip)]
                 if cronjobs:
