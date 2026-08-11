@@ -8,9 +8,12 @@ services:
     stop_signal: SIGINT
     environment:
       - DASHBOARD_LLM_URL=http://dashboard/api/llm/chat
+      # Build sources for the "Build images" button (the SLIPS/runner project).
+      - FEDERATION_BUILD_SOURCES=/srv/federation-build
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - network-topology-data:/app/data
+      - ${FEDERATION_BUILD_SOURCES:-/srv/federation-build}:/srv/federation-build:ro
     ports:
       # UI bound to localhost only — never exposed to the network/internet.
       # Access directly at http://127.0.0.1:9002 or via SSH tunnel from a

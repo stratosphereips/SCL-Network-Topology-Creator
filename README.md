@@ -44,24 +44,16 @@ Legacy saved topologies named `SSH Lab` are removed automatically the next time 
 
 ## Run the UI and connect
 
-The plugin container bundles the Docker CLI (with `docker compose`) and mounts the Docker socket, so it both **serves the UI/API** and **deploys the generated topologies** — no separate deploy step.
+The plugin container bundles the Docker CLI (with `docker compose`) and mounts the Docker socket, so it both **serves the UI/API** and **deploys the generated topologies** — no separate deploy step. The UI is a pure topology authoring tool: you can start it and create networks right away with **nothing pre-built**.
 
-### 1. Build the runtime images (once)
-
-The managed runtimes must exist locally (`build-images.sh` builds them from the SLIPS/runner project):
-
-```bash
-./build-images.sh ~/thesis_project     # builds + tags federation_network-slips and federation_network-service
-```
-
-### 2. Start the UI
+### 1. Start the UI
 
 ```bash
 docker compose up -d --build
-docker compose ps                      # should show the control-plane "Up"
+docker compose ps                      # control-plane "Up"
 ```
 
-### 3. Connect to the UI
+### 2. Connect to the UI
 
 - **On the same machine** (localhost): open `http://127.0.0.1:9002`
 - **From a remote computer**, tunnel over SSH and open the URL on *your* machine:
@@ -70,6 +62,19 @@ docker compose ps                      # should show the control-plane "Up"
   # then open http://127.0.0.1:9002 on your laptop
   ```
 - The port is bound to `127.0.0.1` only — see *Remote access via SSH tunnel* below for details.
+
+### 3. Build the runtime images (only needed to *deploy* sensors/services)
+
+The `federation_network-slips` / `federation_network-service` images are required only when you **Start** a topology that has slips/service nodes. Build them:
+
+- **From the UI:** press **Build images** (mount the SLIPS/runner project into the container first):
+  ```bash
+  FEDERATION_BUILD_SOURCES=/path/to/thesis_project docker compose up -d --build
+  # then click "Build images" in the UI (or POST /api/images/build)
+  ```
+- **Or manually:** `./build-images.sh /path/to/thesis_project`
+
+The topologies (networks, nodes, profiles, firewall) need no images — you can design + save them before/without any build.
 
 In the UI: **New** → add networks + nodes, set each node's profile (slips variant, services, connections, internal, attacker pivot), **Save**, then **Start**. The same work is available headlessly through the **HTTP API** section next.
 
@@ -86,7 +91,9 @@ Base URL (local machine): `http://127.0.0.1:9002`
 | `GET` | `/api/topologies/<id>` | Fetch one topology's full JSON + running flag |
 | `POST` | `/api/topologies/<id>/start` | Deploy the topology (`docker-compose up -d`). Returns a `job_id`. |
 | `POST` | `/api/topologies/<id>/stop` | Tear it down (`docker-compose down`). Returns a `job_id`. |
-| `GET` | `/api/jobs/<job_id>` | Poll status of a background start/stop/data job |
+| `GET` | `/api/images` | Which `federation_network-*` images exist locally |
+| `POST` | `/api/images/build` | Build + tag the `federation_network-*` images (background `job_id`) |
+| `GET` | `/api/jobs/<job_id>` | Poll status of a background start/stop/build/data job |
 | `POST` | `/api/generate-data` | AI-generate host seed data (requires the SCL LLM endpoint) |
 
 `start`, `stop` and `generate-data` run in the background and return a `job_id`; poll `/api/jobs/<job_id>` until `status == "completed"` (built into the UI — automation should do the same).

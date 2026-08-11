@@ -734,6 +734,7 @@ INDEX_HTML = r"""<!doctype html>
         <div class="toolbar">
           <button id="saveTopology">Save topology</button>
           <button class="secondary" id="newTopology">New</button>
+          <button class="secondary" id="buildImages" title="Build the federation_network-* runtime images">Build images</button>
         </div>
       </header>
       <div class="grid">
@@ -1750,6 +1751,22 @@ INDEX_HTML = r"""<!doctype html>
         }
       }
 
+      async function buildImages() {
+        const btn = document.getElementById('buildImages');
+        if (!btn) return;
+        btn.disabled = true;
+        setStatus('Building federation_network-* images (this can take a while)...');
+        try {
+          const job = await api('api/images/build', { method: 'POST', body: '{}' });
+          await waitForJob(job.job_id, 'Building federation_network-* images...');
+          setStatus('Images built. Check the API /api/images for status.');
+        } catch (error) {
+          setStatus(`Build images error: ${error.message}`);
+        } finally {
+          btn.disabled = false;
+        }
+      }
+
       async function stopTopology(id) {
         if (busyTopologyId) return;
         busyTopologyId = id;
@@ -1845,6 +1862,7 @@ INDEX_HTML = r"""<!doctype html>
         try {
           const firewallEl = event.target.closest?.('[data-firewall]');
           if (event.target.id === 'saveTopology') return saveTopology();
+          if (event.target.id === 'buildImages') return buildImages();
           if (event.target.id === 'newTopology') {
             selectedId = null;
             resetModel(Number(networkCount.value) || 3, Number(defaultHosts.value) || 3);
@@ -2624,6 +2642,64 @@ def docker_command():
     return ['docker-compose']
 
 
+# Managed federation runtime images that can be built from mounted build sources.
+FEDERATION_IMAGES = ['federation_network-slips', 'federation_network-service']
+# Host directory (mounted into the control plane) that contains the SLIPS/runner
+# project whose Dockerfiles build the federation_network-* images.
+BUILD_SOURCES = Path(os.environ.get('FEDERATION_BUILD_SOURCES', '/srv/federation-build'))
+
+
+def federation_images_status():
+    """Report which federation_network images exist locally."""
+    try:
+        listed = subprocess.run(
+            ['docker', 'images', '--format', '{{.Repository}}'],
+            capture_output=True, text=True, timeout=30,
+        ).stdout.splitlines()
+    except Exception:
+        listed = []
+    have = set(listed)
+    return {name: name in have for name in FEDERATION_IMAGES}
+
+
+def _docker_build(tag, dockerfile):
+    result = subprocess.run(
+        ['docker', 'build', '-f', dockerfile, '-t', tag, str(BUILD_SOURCES)],
+        capture_output=True, text=True, timeout=3600,
+    )
+    if result.returncode != 0:
+        raise RuntimeError((result.stderr or result.stdout)[-2000:])
+    return tag
+
+
+def build_federation_images():
+    """Build + tag the federation_network-* images from mounted BUILD_SOURCES.
+
+    Falls back to building just what's available; raises if none of the build
+    sources are mounted.
+    """
+    if not BUILD_SOURCES.is_dir():
+        raise RuntimeError(f'Build sources not mounted at {BUILD_SOURCES}')
+    log = []
+    if (BUILD_SOURCES / 'service' / 'Dockerfile').exists():
+        log.append(_docker_build('federation_network-service:latest',
+                                 str(BUILD_SOURCES / 'service' / 'Dockerfile')))
+        log.append('federation_network-service: built')
+    else:
+        log.append('federation_network-service: no build source (service/Dockerfile missing)')
+    if (BUILD_SOURCES / 'slips' / 'slips.Dockerfile').exists():
+        log.append(_docker_build('scl-custom_challenge-slips',
+                                 str(BUILD_SOURCES / 'slips' / 'slips.Dockerfile')))
+        subprocess.run(['docker', 'tag', 'scl-custom_challenge-slips', 'federation_network-slips:latest'],
+                       capture_output=True, text=True, timeout=60)
+        log.append('federation_network-slips: built')
+    else:
+        log.append('federation_network-slips: no build source (slips/slips.Dockerfile missing)')
+    if not any('built' in line for line in log):
+        raise RuntimeError(f'No build sources found under {BUILD_SOURCES}')
+    return {'built': federation_images_status(), 'log': log}
+
+
 def ensure_base_image():
     result = subprocess.run(['docker', 'image', 'inspect', BASE_IMAGE], capture_output=True, text=True)
     if result.returncode == 0:
@@ -2839,6 +2915,9 @@ class TopologyHandler(BaseHTTPRequestHandler):
         if path == '/api/topologies':
             self.send_json(200, {'topologies': list_topologies()})
             return
+        if path == '/api/images':
+            self.send_json(200, {'images': federation_images_status()})
+            return
         match = re.fullmatch(r'/api/jobs/([^/]+)', path)
         if match:
             job = get_job(unquote(match.group(1)))
@@ -2864,6 +2943,10 @@ class TopologyHandler(BaseHTTPRequestHandler):
         if path == '/api/topologies':
             topology = save_topology(self.read_body())
             self.send_json(200, {'topology': topology})
+            return
+        if path == '/api/images/build':
+            job_id = start_job(build_federation_images)
+            self.send_json(202, {'job_id': job_id})
             return
         if path == '/api/generate-data':
             body = self.read_body()
