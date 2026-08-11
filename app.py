@@ -2538,6 +2538,15 @@ def generate_compose(topology):
                 slips_variant = profile.get('slips_variant', 'none')
                 if slips_variant != 'none' and slips_variant in SLIPS_PROFILES:
                     env_vars['SLIPS_PROFILE'] = slips_variant
+                # Tell every peer who all the peers are (no hardcoded addresses).
+                peer_names = [
+                    h['name']
+                    for net in topology.get('networks', [])
+                    for h in net.get('hosts', [])
+                    if h.get('type') == 'slips-peer'
+                ]
+                if peer_names:
+                    env_vars['SLIPS_PEERS'] = ','.join(peer_names)
             svc = {
                 'image': image,
                 'container_name': f'{project_prefix}-{service_name}',
