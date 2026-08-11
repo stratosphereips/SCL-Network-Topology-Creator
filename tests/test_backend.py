@@ -147,18 +147,48 @@ def test_generate_compose_service_env():
 
 
 def test_generate_compose_internal_target_resolution():
-    # snmp-1 has internal connection ftp_check -> resolves to ftp-1 hostname
+    # snmp-1 has internal connection ftp_check -> resolves to ftp-1 hostname,
+    # delivered to the entrypoint via EXTRA_CRON so it isn't clobbered.
     n1 = _generate()["services"]["slip-net-n1"]
-    cmd = n1.get("command")
-    assert cmd is not None
-    assert "check-ftp.sh ftp-1" in cmd[-1]
+    extra = n1.get("environment", {}).get("EXTRA_CRON", "")
+    assert "check-ftp.sh ftp-1" in extra
 
 
 def test_generate_compose_cron_only_when_present():
     comp = _generate()
-    assert "*/5 * * * * internet-traffic.sh wikipedia" in comp["services"]["slip-net-s1"]["command"][-1]
-    # slips-2 has no connections -> native entrypoint, no command override
+    assert "internet-traffic.sh wikipedia" in comp["services"]["slip-net-s1"]["environment"]["EXTRA_CRON"]
+    # slips-2 has no connections -> no EXTRA_CRON, no command override
+    assert "EXTRA_CRON" not in comp["services"]["slip-net-s2"].get("environment", {})
     assert comp["services"]["slip-net-s2"].get("command") is None
+
+
+def test_generate_compose_cron_not_clobbered_by_entrypoint():
+    """Regression: connection crontab lines must reach the container.
+
+    Previously the plugin wrote the crontab inline in the command, which the
+    image entrypoint then overwrote with its own crontab (clobbering the baked
+    traffic). Now the crontab is passed to the entrypoint via EXTRA_CRON so it
+    merges rather than replaces.
+    """
+    comp = _generate()
+
+    # Sensor with a connection: EXTRA_CRON carries the resolved traffic line,
+    # and the command must NOT itself write crontab (entrypoint merges it).
+    s1 = comp["services"]["slip-net-s1"]
+    assert "EXTRA_CRON" in s1.get("environment", {})
+    assert "internet-traffic.sh wikipedia" in s1["environment"]["EXTRA_CRON"]
+    assert "crontab" not in s1["command"][-1]
+
+    # Service host with an internal connection: EXTRA_CRON has the resolved
+    # target (service role -> real hostname), so it survives the entrypoint.
+    n1 = comp["services"]["slip-net-n1"]
+    assert "EXTRA_CRON" in n1.get("environment", {})
+    assert "check-ftp.sh ftp-1" in n1["environment"]["EXTRA_CRON"]
+    assert "crontab" not in n1["command"][-1]
+
+    # A managed node with no traffic leaves no EXTRA_CRON.
+    s2 = comp["services"]["slip-net-s2"]
+    assert "EXTRA_CRON" not in s2.get("environment", {})
 
 
 def test_generate_compose_networks_created():

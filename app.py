@@ -2571,8 +2571,10 @@ def generate_compose(topology):
             if managed:
                 svc['stop_grace_period'] = '30s'
                 if cronjobs:
-                    cron_script = 'echo "' + '\\n'.join(cronjobs) + '" | crontab - 2>/dev/null; service cron start 2>/dev/null; '
-                    svc['command'] = ['sh', '-lc', f'{cron_script}{node_entrypoint(profile)}']
+                    # Pass traffic crontab lines to the runtime entrypoint, which
+                    # merges them into its own crontab (avoids clobbering).
+                    env_vars['EXTRA_CRON'] = '\n'.join(cronjobs)
+                    svc['command'] = ['sh', '-lc', f'service cron start 2>/dev/null; {node_entrypoint(profile)}']
                 # else: native ENTRYPOINT of the (slips / service) runtime image
             else:
                 svc['command'] = ['sh', '-lc', host_script(topology, network, host, host_index, gateway_ip)]
