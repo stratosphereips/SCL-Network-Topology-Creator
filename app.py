@@ -97,6 +97,121 @@ def host_image(host_type):
         'slip-snmp': 'federation_network-snmp:latest',
     }.get(host_type, BASE_IMAGE)
 
+
+# Profile registries. Adding a new slips variant / service / connection type
+# is a single entry here — no core logic changes required.
+SLIPS_PROFILES = {
+    'none': {'label': 'None', 'resources': {}, 'modules': []},
+    'weak': {
+        'label': 'Weak',
+        'resources': {'cpus': 1, 'mem': '2g'},
+        'modules': ['connected_flows', 'timeline'],
+    },
+    'middle': {
+        'label': 'Middle',
+        'resources': {'cpus': 2, 'mem': '4g'},
+        'modules': ['connected_flows', 'timeline', 'ml_online'],
+    },
+    'strong': {
+        'label': 'Strong',
+        'resources': {'cpus': 4, 'mem': '8g'},
+        'modules': ['connected_flows', 'timeline', 'ml_online', 'brute_force'],
+    },
+}
+
+SERVICES = {
+    'ftp': {
+        'label': 'FTP server',
+        'image_role': 'federation_network-ftp',
+        'entrypoint': 'ftp-entrypoint.sh',
+        'ports': ['21/tcp'],
+        'target_role': 'ftp',
+    },
+    'snmp': {
+        'label': 'SNMP / web server',
+        'image_role': 'federation_network-snmp',
+        'entrypoint': 'snmp-entrypoint.sh',
+        'ports': ['161/udp', '8000/tcp'],
+        'target_role': 'snmp',
+    },
+}
+
+CONNECTION_TYPES = {
+    'wikipedia': {
+        'label': 'Wikipedia (external)',
+        'scope': 'external',
+        'interval': '*/5 * * * *',
+        'command': 'internet-traffic.sh wikipedia',
+    },
+    'images': {
+        'label': 'Images (external)',
+        'scope': 'external',
+        'interval': '*/7 * * * *',
+        'command': 'internet-traffic.sh images',
+    },
+    'ftp_check': {
+        'label': 'FTP check (internal)',
+        'scope': 'internal',
+        'interval': '* * * * *',
+        'command': 'check-ftp.sh {target}',
+        'target_role': 'ftp',
+    },
+    'web_internal': {
+        'label': 'Internal web (internal)',
+        'scope': 'internal',
+        'interval': '*/2 * * * *',
+        'command': 'curl-website.sh {target}',
+        'target_role': 'snmp',
+    },
+}
+
+
+def _normalize_profile(profile):
+    """Coerce a host profile to a known shape; drop unknown/nonexistent ids."""
+    if not isinstance(profile, dict):
+        profile = {}
+    slips_variant = profile.get('slips_variant', 'none')
+    if slips_variant not in SLIPS_PROFILES:
+        slips_variant = 'none'
+    services = [s for s in (profile.get('services') or []) if s in SERVICES]
+    connections = [c for c in (profile.get('connections') or []) if c in CONNECTION_TYPES]
+    internal = [
+        c for c in (profile.get('internal') or [])
+        if c in CONNECTION_TYPES and CONNECTION_TYPES[c].get('scope') == 'internal'
+    ]
+    return {
+        'slips_variant': slips_variant,
+        'attacker_pivot': bool(profile.get('attacker_pivot')),
+        'services': services,
+        'connections': connections,
+        'internal': internal,
+    }
+
+
+def _connection_cron_lines(topology, profile):
+    """Expand a host's connection profile into concrete crontab lines.
+
+    Internal connections resolve {target} to the name of a host in the
+    topology that provides the required service role.
+    """
+    lines = []
+    role_to_host = {}
+    for net in topology.get('networks', []):
+        for host in net.get('hosts', []):
+            hprofile = host.get('profile') or {}
+            for svc in hprofile.get('services', []):
+                role_to_host.setdefault(svc, host['name'])
+    for cid in list(profile.get('connections', [])) + list(profile.get('internal', [])):
+        ct = CONNECTION_TYPES.get(cid)
+        if not ct:
+            continue
+        command = ct['command']
+        target_role = ct.get('target_role')
+        if target_role:
+            command = command.replace('{target}', role_to_host.get(target_role, 'localhost'))
+        lines.append(f"{ct['interval']} {command}")
+    return lines
+
 INDEX_HTML = r"""<!doctype html>
 <html lang="en">
   <head>
@@ -710,6 +825,9 @@ INDEX_HTML = r"""<!doctype html>
       setTimeout(fitHostIframe, 1200);
 
       const HOST_TYPES = __HOST_TYPES__;
+      const SLIPS_PROFILES = __SLIPS_PROFILES__;
+      const SERVICES = __SERVICES__;
+      const CONNECTION_TYPES = __CONNECTION_TYPES__;
       const networksEl = document.getElementById('networks');
       const firewallGraphEl = document.getElementById('firewallGraph');
       const statusEl = document.getElementById('status');
@@ -1061,9 +1179,23 @@ INDEX_HTML = r"""<!doctype html>
         `;
       }
 
+      function profChecks(registry, field, selected, scope) {
+        const sel = new Set(selected || []);
+        return Object.entries(registry)
+          .filter(([, info]) => !scope || info.scope === scope)
+          .map(([id, info]) =>
+            `<label class="checkbox-line"><input data-field="${field}" type="checkbox" value="${id}" ${sel.has(id) ? 'checked' : ''}> ${escapeHtml(info.label)}</label>`
+          ).join('');
+      }
+
+      function checkedValues(root, field) {
+        return Array.from(root.querySelectorAll(`[data-field="${field}"]:checked`)).map((el) => el.value);
+      }
+
       function hostTemplate(host, networkIndex, hostIndex) {
         const network = model.networks[networkIndex];
         const hostIp = network ? networkHostIp(network.cidr, hostIndex + 1) : '';
+        const profile = Object.assign({ slips_variant: 'none', attacker_pivot: false, services: [], connections: [], internal: [] }, host.profile || {});
         return `
           <div class="host" data-host="${hostIndex}">
             <div class="host-head">
@@ -1104,8 +1236,25 @@ INDEX_HTML = r"""<!doctype html>
                 <input data-field="host.run_web" type="checkbox" ${host.run_web ? 'checked' : ''}>
                 <span>Run web traffic generator (cron job)</span>
               </label></div>` : ''}
+              <div class="span-12 profile-box">
+                <h5>Machine profile</h5>
+                <div class="row">
+                  <div class="span-4">
+                    <label>SLIPS variant</label>
+                    <select data-field="profile.slips_variant">${Object.keys(SLIPS_PROFILES).map((v) => `<option value="${v}" ${v === profile.slips_variant ? 'selected' : ''}>${SLIPS_PROFILES[v].label}</option>`).join('')}</select>
+                  </div>
+                  <div class="span-4">
+                    <label class="checkbox-line" style="margin:0"><input data-field="profile.attacker_pivot" type="checkbox" ${profile.attacker_pivot ? 'checked' : ''}> Attacker pivot (max 1)</label>
+                  </div>
+                </div>
+                <div class="row">
+                  <div class="span-4"><label>Services</label>${profChecks(SERVICES, 'profile.services', profile.services)}</div>
+                  <div class="span-4"><label>Connections (external)</label>${profChecks(CONNECTION_TYPES, 'profile.connections', profile.connections, 'external')}</div>
+                  <div class="span-4"><label>Connections (internal)</label>${profChecks(CONNECTION_TYPES, 'profile.internal', profile.internal, 'internal')}</div>
+                </div>
+              </div>
               <div class="span-12">
-                <label>Cron jobs (one per line, e.g. */5 * * * * /usr/bin/curl http://10.77.2.11/)</label>
+                <label>Cron jobs (one per line, appended to profile connections)</label>
                 <textarea data-field="host.cronjobs" rows="2">${escapeHtml((host.cronjobs || []).join('\\n'))}</textarea>
               </div>
               <div class="span-8">
@@ -1113,6 +1262,7 @@ INDEX_HTML = r"""<!doctype html>
                 <input data-field="host.data_prompt" placeholder="Example: internal invoices for a fake finance department" value="${escapeHtml(host.data_prompt || '')}">
               </div>
               <div class="span-4 toolbar">
+                <button class="secondary" data-action="duplicate-host" data-network-index="${networkIndex}" data-host-index="${hostIndex}">Add +1</button>
                 <button class="secondary" data-action="generate-host-data" data-network-index="${networkIndex}" data-host-index="${hostIndex}">Generate data</button>
                 <button class="danger" data-action="remove-host" data-network-index="${networkIndex}" data-host-index="${hostIndex}">Remove</button>
               </div>
@@ -1435,6 +1585,13 @@ INDEX_HTML = r"""<!doctype html>
                 data_content: valueOf(hostEl, 'host.data_content'),
                 run_web: checkedOf(hostEl, 'host.run_web'),
                 cronjobs: (valueOf(hostEl, 'host.cronjobs') || '').split('\\n').filter((s) => s.trim()),
+                profile: {
+                  slips_variant: valueOf(hostEl, 'profile.slips_variant') || 'none',
+                  attacker_pivot: checkedOf(hostEl, 'profile.attacker_pivot'),
+                  services: checkedValues(hostEl, 'profile.services'),
+                  connections: checkedValues(hostEl, 'profile.connections'),
+                  internal: checkedValues(hostEl, 'profile.internal'),
+                },
               };
             });
         });
@@ -1792,6 +1949,24 @@ INDEX_HTML = r"""<!doctype html>
             model.networks[Number(event.target.dataset.networkIndex)].hosts.splice(Number(event.target.dataset.hostIndex), 1);
             render();
           }
+          if (action === 'duplicate-host') {
+            collect();
+            const net = model.networks[Number(event.target.dataset.networkIndex)];
+            const src = net.hosts[Number(event.target.dataset.hostIndex)];
+            const baseName = (src.name || 'host').replace(/-\d+$/, '');
+            let next = net.hosts.length + 1;
+            let hostId = `${src.id || baseName}-${next}`;
+            const ids = new Set(net.hosts.map((h) => h.id));
+            while (ids.has(hostId)) { next += 1; hostId = `${src.id || baseName}-${next}`; }
+            const copy = JSON.parse(JSON.stringify(src));
+            copy.id = `${src.id || baseName}-${next}`;
+            copy.name = `${baseName}-${next}`;
+            copy.profile = Object.assign({}, src.profile || {});
+            // a duplicated device can never be the (single) attacker pivot
+            copy.profile.attacker_pivot = false;
+            net.hosts.splice(Number(event.target.dataset.hostIndex) + 1, 0, copy);
+            render();
+          }
           if (action === 'generate-host-data') return generateHostData(Number(event.target.dataset.networkIndex), Number(event.target.dataset.hostIndex));
           if (action === 'load-topology') return loadTopology(event.target.dataset.id);
           if (action === 'start-topology') return startTopology(event.target.dataset.id);
@@ -1924,6 +2099,7 @@ def validate_topology(topology):
             host['data_content'] = str(host.get('data_content') or '')
             host['cronjobs'] = host.get('cronjobs') if isinstance(host.get('cronjobs'), list) else []
             host['run_web'] = bool(host.get('run_web'))
+            host['profile'] = _normalize_profile(host.get('profile'))
         legacy_router_id = network.get('router_id')
         router_ids = network.get('router_ids')
         if not isinstance(router_ids, list):
@@ -1932,6 +2108,16 @@ def validate_topology(topology):
             router_ids = [legacy_router_id] + [router_id for router_id in router_ids if router_id != legacy_router_id]
         network['router_ids'] = router_ids
         network['default_router_id'] = network.get('default_router_id') or legacy_router_id or ''
+
+    # Enforce at most one attacker pivot across the whole topology.
+    attacker_pivot_count = sum(
+        1
+        for net in networks
+        for host in net.get('hosts', [])
+        if (host.get('profile') or {}).get('attacker_pivot')
+    )
+    if attacker_pivot_count > 1:
+        raise ValueError('At most one host may be marked as the attacker pivot.')
 
     firewall = topology.setdefault('router', {}).setdefault('firewall', {})
     allowed = firewall.get('allowed') or []
@@ -2338,6 +2524,7 @@ def generate_compose(topology):
             host_type = host.get('type', 'normal-user')
             is_federation = host_type in FEDERATION_HOST_TYPES
             image = host_image(host_type)
+            profile = host.get('profile') or {}
             caps = ['NET_ADMIN', 'NET_RAW', 'SYS_ADMIN'] if host_type == 'slips-peer' else (['NET_ADMIN'] if is_federation else ['NET_ADMIN'])
             env_vars = {}
             if host_type == 'slips-peer':
@@ -2348,6 +2535,9 @@ def generate_compose(topology):
                 }
                 if host.get('run_web'):
                     env_vars['RUN_WEB'] = '1'
+                slips_variant = profile.get('slips_variant', 'none')
+                if slips_variant != 'none' and slips_variant in SLIPS_PROFILES:
+                    env_vars['SLIPS_PROFILE'] = slips_variant
             svc = {
                 'image': image,
                 'container_name': f'{project_prefix}-{service_name}',
@@ -2363,7 +2553,17 @@ def generate_compose(topology):
             }
             if env_vars:
                 svc['environment'] = env_vars
-            cronjobs = host.get('cronjobs') or []
+            # Bake SLIPS capacity from the selected variant (strong/middle/weak).
+            if host_type == 'slips-peer':
+                resources = SLIPS_PROFILES.get(profile.get('slips_variant', 'none'), {}).get('resources') or {}
+                if resources.get('cpus'):
+                    svc['cpus'] = resources['cpus']
+                if resources.get('mem'):
+                    svc['mem_limit'] = resources['mem']
+            # Assemble crontab lines: literal cronjobs + expanded connection profile.
+            cron_lines = list(host.get('cronjobs') or [])
+            cron_lines += _connection_cron_lines(topology, profile)
+            cronjobs = [line for line in cron_lines if line.strip()]
             if host_type in FEDERATION_HOST_TYPES:
                 svc['stop_grace_period'] = '30s'
                 if cronjobs:
@@ -2613,6 +2813,9 @@ class TopologyHandler(BaseHTTPRequestHandler):
         path = parsed.path.rstrip('/') or '/'
         if path == '/':
             html = INDEX_HTML.replace('__HOST_TYPES__', json.dumps(HOST_TYPES))
+            html = html.replace('__SLIPS_PROFILES__', json.dumps(SLIPS_PROFILES))
+            html = html.replace('__SERVICES__', json.dumps(SERVICES))
+            html = html.replace('__CONNECTION_TYPES__', json.dumps(CONNECTION_TYPES))
             self.send_html(html)
             return
         if path == '/api/topologies':
