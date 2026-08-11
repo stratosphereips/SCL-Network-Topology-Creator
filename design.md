@@ -59,23 +59,36 @@ Behaviour at boot is driven by env injected by the plugin.
 
 ## 3. The profile model
 
-Each node has a `profile` stored in `topology.json`:
+There are **no fused host types** (no `slips-peer` / `slip-ftp` / `pivot` …).
+A node's behaviour is composed entirely from its profile, so image + config are
+put together from the settings (not a hardcoded per-role image):
 
 ```jsonc
 {
   "slips_variant": "weak",          // none | weak | middle | strong
   "attacker_pivot": false,          // at most one true in the whole topology
-  "services": ["ftp", "snmp"],      // ftp | snmp | ... (registry)
+  "services": ["ftp", "snmp"],      // ftp | snmp | web | ... (registry)
   "connections": ["wikipedia", "images"],  // external traffic generators
   "internal": ["ftp_check"]          // internal (cross-device) traffic generators
 }
 ```
 
+**Image selection** (from settings, not a type enum):
+- `slips_variant != none` → `federation_network-slips`
+- else `services` non-empty → `federation_network-service` (unified runtime)
+- else → plain base image
+
+**Config assembly** at bake/deploy time:
+- sensor → `SLIPS_PROFILE` (variant → cpus/mem + module set),
+  `SLIPS_PEERS` (all sensor hostnames), `RUN_WEB`, thread env.
+- service node → `SERVICES` env (which daemons the unified runtime starts).
+- connections/internal → expanded cron lines; internal `{target}` resolved to a
+  host providing the service role.
+
 Registries make the system extensible with a single entry each:
 - `SLIPS_PROFILES` — variant → resources (cpus/mem) + module set.
-- `SERVICES` — id → `federation_network-*` image / entrypoint / ports / target role.
-- `CONNECTION_TYPES` — external/internal; internal entries carry a `target_role`
-  resolved to a real host at bake time.
+- `SERVICES` — id → label (+ future image/ports/target role).
+- `CONNECTION_TYPES` — external/internal; internal entries carry a `target_role`.
 
 ### Copy / reuse
 

@@ -30,20 +30,19 @@ What the upstream plugin already provided:
 The branch adapts the plugin to build **SLIPS federation test networks** for the
 Jan-thesis-work experiment runner. Everything below is new relative to upstream.
 
-### 1. Federation host types (new roles)
-Added five SLIPS-specific host types that map to `federation_network-*` images:
+### 1. Federation host composition (no fused types)
+Earlier revisions used per-role host types (`slips-peer`, `slip-ftp`, `pivot`,
+…) each pinned to a specific image. That info was **redundant** with the
+profile (`slips_variant` + `services` + connections), so the fused types were
+removed. A node's image + config are now **composed from its settings**:
 
-| Type | Image | Purpose |
-|---|---|---|
-| `slips-peer` | `federation_network-slips` | SLIPS IDS (Zeek / Redis / P2P federation) |
-| `aracne-attacker` | `federation_network-attacker` | LLM-driven Aracne attacker |
-| `pivot` | `federation_network-pivot` | SSH pivot node |
-| `slip-ftp` | `federation_network-ftp` | FTP service host |
-| `slip-snmp` | `federation_network-snmp` | SNMP + web service host |
+- `slips_variant != none` → `federation_network-slips`
+- `services` non-empty → `federation_network-service` (unified runtime)
+- else → plain base image
 
-The `host_image()` mapper resolves a type to its image; `host_entrypoint_cmd()`
-lets each type start either natively (its built-in ENTRYPOINT/CMD) or behind a
-cronjob wrapper.
+The unified service runtime (`service/`) starts only the daemons listed in the
+`SERVICES` env (ftp / snmp / web), so `slips-ftp` is just
+`slips_variant:none` + `services:["ftp"]`.
 
 ### 2. SLIPS peer wiring in generated compose
 When a host is a `slips-peer`, `generate_compose()` adds:
