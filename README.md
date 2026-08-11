@@ -2,7 +2,7 @@
 
 This repository is the standalone home for the SCL Network Topology Creator plugin.
 
-> This branch (`federated_module_testing_framework`) extends the plugin to build SLIPS federation test networks. It adds SLIPS-specific host types (`slips-peer`, `aracne-attacker`, `pivot`, `slip-ftp`, `slip-snmp`) that pull `federation_network-*` Docker images, per-host cronjob/traffic support, a network-copy action, and binds the UI + API to `127.0.0.1:9002` only (local/SSH-tunnel access — see *Remote access via SSH tunnel* below). Build the images with `./build-images.sh`.
+> This branch (`federated_module_testing_framework`) extends the plugin to build SLIPS federation test networks. A node's image + config are composed from its **profile** (slips_variant → `federation_network-slips`; services → `federation_network-service`; else the base image). The UI/API bind to `127.0.0.1:9002` only. Build the images with `./build-images.sh`.
 
 It provides a local control plane for designing and running generated StratoCyberLab network topologies. Each topology can define routed networks, router hierarchies, Ubuntu hosts, host roles, local users, optional generated data, internet access per network, router firewall rules, and SSH access on selected hosts.
 It also lets you place the `hackerlab` container onto one selected network so you can start the lab from that segment.
@@ -41,6 +41,37 @@ Replace `<github-owner>` with the GitHub account or organization where this repo
 If you add or remove plugins under `./plugins`, restart the SCL dashboard so it rescans plugin metadata. For ordinary changes inside this repository, restart only the plugin container and refresh the plugin page.
 
 Legacy saved topologies named `SSH Lab` are removed automatically the next time the plugin UI loads, because they belonged to the old standalone lab example.
+
+## Run the UI and connect
+
+The plugin container bundles the Docker CLI (with `docker compose`) and mounts the Docker socket, so it both **serves the UI/API** and **deploys the generated topologies** — no separate deploy step.
+
+### 1. Build the runtime images (once)
+
+The managed runtimes must exist locally (`build-images.sh` builds them from the SLIPS/runner project):
+
+```bash
+./build-images.sh ~/thesis_project     # builds + tags federation_network-slips and federation_network-service
+```
+
+### 2. Start the UI
+
+```bash
+docker compose up -d --build
+docker compose ps                      # should show the control-plane "Up"
+```
+
+### 3. Connect to the UI
+
+- **On the same machine** (localhost): open `http://127.0.0.1:9002`
+- **From a remote computer**, tunnel over SSH and open the URL on *your* machine:
+  ```bash
+  ssh -N -L 9002:127.0.0.1:9002 user@server
+  # then open http://127.0.0.1:9002 on your laptop
+  ```
+- The port is bound to `127.0.0.1` only — see *Remote access via SSH tunnel* below for details.
+
+In the UI: **New** → add networks + nodes, set each node's profile (slips variant, services, connections, internal, attacker pivot), **Save**, then **Start**. The same work is available headlessly through the **HTTP API** section next.
 
 ## HTTP API
 
