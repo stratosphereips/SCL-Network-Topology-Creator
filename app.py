@@ -2976,6 +2976,34 @@ FEDERATION_IMAGES = ['federation_network-slips', 'federation_network-service']
 BUILD_SOURCES = Path(os.environ.get('FEDERATION_BUILD_SOURCES', '/srv/federation-build'))
 
 
+def _load_build_services():
+    """Merge service definitions from the mounted build source's services.json
+    into SERVICES, so adding a new service does not require editing code.
+
+    services.json is the single source of truth (shared with the service image
+    builder and the unified runtime): each entry carries UI metadata
+    (label/target_role/group/ports) used here, plus build/runtime keys
+    (packages/files/start) consumed by the image build and service-entrypoint.
+    """
+    extra = BUILD_SOURCES / 'services.json'
+    if not extra.is_file():
+        return
+    try:
+        data = json.loads(extra.read_text())
+    except (OSError, ValueError):
+        return
+    for sid, spec in (data.get('services') or {}).items():
+        entry = SERVICES.get(sid, {})
+        for key in ('label', 'target_role', 'group', 'ports', 'entrypoint'):
+            if key in spec:
+                entry[key] = spec[key]
+        entry.setdefault('entrypoint', f'{sid}-entrypoint.sh')
+        SERVICES[sid] = entry
+
+
+_load_build_services()
+
+
 def federation_images_status():
     """Report which federation_network images exist locally."""
     try:
