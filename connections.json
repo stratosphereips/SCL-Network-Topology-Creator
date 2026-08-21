@@ -1,0 +1,34 @@
+{
+  "wikipedia": {
+    "label": "Wikipedia (external)",
+    "scope": "external",
+    "interval": "*/5 * * * *",
+    "command": "internet-traffic.sh wikipedia"
+  },
+  "google": {
+    "label": "Google (external)",
+    "scope": "external",
+    "interval": "*/7 * * * *",
+    "command": "internet-traffic.sh google"
+  },
+  "images": {
+    "label": "Images (external)",
+    "scope": "external",
+    "interval": "*/7 * * * *",
+    "command": "internet-traffic.sh images"
+  },
+  "ftp_check": {
+    "label": "FTP check (internal)",
+    "scope": "internal",
+    "interval": "* * * * *",
+    "command": "check-ftp.sh {target}",
+    "target_role": "ftp"
+  },
+  "web_internal": {
+    "label": "Internal web (internal)",
+    "scope": "internal",
+    "interval": "*/2 * * * *",
+    "command": "curl-website.sh {target}",
+    "target_role": "web"
+  }
+}

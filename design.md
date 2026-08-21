@@ -92,10 +92,14 @@ Registries make the system extensible with a single entry each:
 
 ### Copy / reuse
 
-- A node is configured once, then **"Add +1"** clones it into a network with a
-  regenerated name / hostname / IP slot / peer id, reusing the same image
-  (Docker shares layers). A duplicated node is **never** the attacker pivot.
+- A node is configured once, then **Repeats=N** clones it into N identical
+  devices with regenerated name / hostname / IP slot / peer id, reusing the same
+  image (Docker shares layers). A replicated device is **never** the attacker
+  pivot. This replaces the old "Add +1" button — replication happens inside the
+  plugin (in `generate_compose` / `expand_repeats`), not in the UI.
 - Connection profiles are reusable across many nodes (they're registry ids).
+  Internal connections carry an explicit **target device** (hostname) so they
+  survive IP changes.
 
 ## 4. Node identity (no hardcoded addresses, reproducible reruns)
 

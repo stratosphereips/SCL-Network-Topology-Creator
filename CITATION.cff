@@ -8,7 +8,14 @@ authors:
       Stratosphere Laboratory, AIC, FEL, Czech
       Technical University in Prague
   orcid: "https://orcid.org/0000-0001-6238-9910"
+authors:
+- family-names: "Svoboda"
+  given-names: "jan"
+  email: svobo114@fel.cvut.cz
+  affiliation: >-
+      Stratosphere Laboratory, AIC, FEL, Czech
+      Technical University in Prague
 title: "SCL-Network-Topology-Creator"
-version: 1.0.0
-date-released: 2026-05-31
+version: 1.1.0
+date-released: 2026-08-11
 url: "https://github.com/stratosphereips/SCL-Network-Topology-Creator"

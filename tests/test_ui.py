@@ -60,7 +60,9 @@ def test_profile_registries_present_in_ui_html():
     assert 'data-field="profile.slips_variant"' in app.INDEX_HTML
     assert "profile.services" in app.INDEX_HTML
     assert "profile.connections" in app.INDEX_HTML
-    assert "profile.internal" in app.INDEX_HTML
+    assert "add-connection" in app.INDEX_HTML  # connection editor (add/dropdown)
+    assert "profile.addconn_type" in app.INDEX_HTML
+    assert "profile.connection_interval" in app.INDEX_HTML
 
 
 def test_required_dom_ids_present():
@@ -69,9 +71,21 @@ def test_required_dom_ids_present():
 
 
 def test_new_host_fields_wired():
-    assert 'data-field="host.cronjobs"' in app.INDEX_HTML
+    assert 'data-field="host.repeats"' in app.INDEX_HTML  # repeats field (replaces +1)
+    assert 'data-field="host.ssh_enabled"' in app.INDEX_HTML
     assert 'data-field="host.run_web"' in app.INDEX_HTML
-    assert "duplicate-network" in app.INDEX_HTML  # Copy-network action
+    assert "profile.connection_type" in app.INDEX_HTML   # unified connection rows
+    assert "add-connection" in app.INDEX_HTML            # add connection from dropdown
+    # free-form cron textarea removed (connections are the single source)
+    assert 'data-field="host.cronjobs"' not in app.INDEX_HTML
+    # +1 duplicate button removed (repeats replicates internally)
+    assert "duplicate-host" not in app.INDEX_HTML
+    # Start/Stop buttons remain in the saved list
+    assert 'data-action="start-topology"' in app.INDEX_HTML
+    assert 'data-action="stop-topology"' in app.INDEX_HTML
+    # per-topology Open + Delete actions so save/load/remove don't need Docker
+    assert 'data-action="load-topology"' in app.INDEX_HTML
+    assert 'data-action="delete-topology"' in app.INDEX_HTML
 
 
 def test_scripts_are_valid_javascript():

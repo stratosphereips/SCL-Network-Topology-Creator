@@ -92,3 +92,35 @@ def test_create_then_get_roundtrip(server):
     # compose file must have been generated on save
     compose = app.compose_path(topology_id)
     assert compose.exists()
+
+
+def test_delete_topology_removes_files(server):
+    body = {
+        "name": "ToDelete",
+        "networks": [
+            {
+                "id": "net-a",
+                "cidr": "10.77.1.0/24",
+                "hosts": [{"id": "h1", "name": "web-1", "type": "normal-user"}],
+            }
+        ],
+        "routers": [{"id": "r1", "name": "core"}],
+    }
+    status, parsed, _ = server("POST", "/api/topologies", body)
+    assert status == 200
+    topology_id = parsed["topology"]["id"]
+
+    # file + compose exist before delete
+    assert app.topology_path(topology_id).exists()
+    assert app.compose_path(topology_id).exists()
+
+    status, parsed, _ = server("DELETE", f"/api/topologies/{topology_id}")
+    assert status == 200
+    assert parsed["status"] == "deleted"
+    assert not app.topology_path(topology_id).exists()
+    assert not app.compose_path(topology_id).exists()
+
+    # deleting a missing topology -> 404
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        server("DELETE", "/api/topologies/does-not-exist")
+    assert exc_info.value.code == 404

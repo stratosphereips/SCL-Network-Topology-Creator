@@ -97,6 +97,40 @@ def is_managed_node(profile):
     return profile.get('slips_variant', 'none') != 'none' or bool(profile.get('services'))
 
 
+# Default SSH credentials mirror the original federation runner (README /
+# image Dockerfiles): SLIPS peers use admin/G9!..., service hosts use admin/admin.
+def default_credentials(profile):
+    profile = profile or {}
+    if profile.get('slips_variant', 'none') != 'none':
+        return 'admin', 'G9!tR4#vX7@cM2$kP8n'
+    if profile.get('services'):
+        return 'admin', 'admin'
+    return 'admin', 'admin'
+
+
+def expand_repeats(hosts):
+    """Expand a host list, cloning each `repeats`-times with unique id/name.
+
+    The plugin replicates internally: a single authored node with repeats=N
+    becomes N nodes (N-1, N-2, ...) with fresh ids/names, so IPs/peers are
+    allocated independently and reproducibly.
+    """
+    expanded = []
+    for host in hosts or []:
+        times = int(host.get('repeats') or 1)
+        for index in range(1, times + 1):
+            clone = dict(host)
+            if index > 1:
+                base = host.get('name') or host.get('id') or 'host'
+                clone['name'] = f'{base}-{index}'
+                clone['id'] = f'{host.get("id", base)}-{index}'
+                clone['profile'] = dict(host.get('profile') or {})
+                clone['profile']['attacker_pivot'] = False
+                clone['repeats'] = 1
+            expanded.append(clone)
+    return expanded
+
+
 # Profile registries. Adding a new slips variant / service / connection type
 # is a single entry here — no core logic changes required.
 SLIPS_PROFILES = {
@@ -118,29 +152,48 @@ SLIPS_PROFILES = {
     },
 }
 
+# Service registries. 'snmp' and 'web' are mutually exclusive on a node
+# (both would fight for port 8000) — enforced by EXCLUSIVE_SERVICE_GROUPS.
 SERVICES = {
     'ftp': {
         'label': 'FTP server',
-        'image_role': 'federation_network-ftp',
         'entrypoint': 'ftp-entrypoint.sh',
         'ports': ['21/tcp'],
         'target_role': 'ftp',
     },
     'snmp': {
-        'label': 'SNMP / web server',
-        'image_role': 'federation_network-snmp',
+        'label': 'SNMP',
         'entrypoint': 'snmp-entrypoint.sh',
-        'ports': ['161/udp', '8000/tcp'],
+        'ports': ['161/udp'],
         'target_role': 'snmp',
+        'group': 'http',
+    },
+    'web': {
+        'label': 'Web server',
+        'entrypoint': 'web-entrypoint.sh',
+        'ports': ['8000/tcp'],
+        'target_role': 'web',
+        'group': 'http',
     },
 }
 
-CONNECTION_TYPES = {
+# Only one service per group may be selected on a node.
+EXCLUSIVE_SERVICE_GROUPS = [['snmp', 'web']]
+
+# Connection registry is loaded from connections.json (next to app.py) so new
+# external/internal connection types can be added without touching code.
+DEFAULT_CONNECTION_TYPES = {
     'wikipedia': {
         'label': 'Wikipedia (external)',
         'scope': 'external',
         'interval': '*/5 * * * *',
         'command': 'internet-traffic.sh wikipedia',
+    },
+    'google': {
+        'label': 'Google (external)',
+        'scope': 'external',
+        'interval': '*/7 * * * *',
+        'command': 'internet-traffic.sh google',
     },
     'images': {
         'label': 'Images (external)',
@@ -160,55 +213,142 @@ CONNECTION_TYPES = {
         'scope': 'internal',
         'interval': '*/2 * * * *',
         'command': 'curl-website.sh {target}',
-        'target_role': 'snmp',
+        'target_role': 'web',
     },
 }
 
+CONNECTIONS_FILE = Path(__file__).resolve().parent / 'connections.json'
+
+
+def _load_connection_types():
+    types = dict(DEFAULT_CONNECTION_TYPES)
+    try:
+        if CONNECTIONS_FILE.exists():
+            loaded = json.loads(CONNECTIONS_FILE.read_text(encoding='utf8'))
+            if isinstance(loaded, dict):
+                for cid, spec in loaded.items():
+                    if isinstance(spec, dict):
+                        types[cid] = spec
+    except Exception:
+        pass
+    return types
+
+
+CONNECTION_TYPES = _load_connection_types()
+
+# Extra connection types that hit a specific device rather than a role. The
+# plugin resolves {target} by hostname (stable across IP changes); a Role target
+# is only a fallback for a connection whose target device was never chosen.
+def _service_group_of(service_id):
+    return (SERVICES.get(service_id) or {}).get('group')
+
 
 def _normalize_profile(profile):
-    """Coerce a host profile to a known shape; drop unknown/nonexistent ids."""
+    """Coerce a host profile to a known shape; drop unknown/nonexistent ids.
+
+    connections is a unified list of connection instances:
+        [{"id": "ftp_check", "target": "ftp-1", "interval": "* * * * *"}]
+    Legacy forms (list of plain ids) and the old separate `internal` field are
+    folded into this single list.
+    """
     if not isinstance(profile, dict):
         profile = {}
     slips_variant = profile.get('slips_variant', 'none')
     if slips_variant not in SLIPS_PROFILES:
         slips_variant = 'none'
     services = [s for s in (profile.get('services') or []) if s in SERVICES]
-    connections = [c for c in (profile.get('connections') or []) if c in CONNECTION_TYPES]
-    internal = [
-        c for c in (profile.get('internal') or [])
-        if c in CONNECTION_TYPES and CONNECTION_TYPES[c].get('scope') == 'internal'
-    ]
+    services = _dedupe_exclusive_services(services)
+    connections = _normalize_connections(profile.get('connections'), profile.get('internal'))
     return {
         'slips_variant': slips_variant,
         'attacker_pivot': bool(profile.get('attacker_pivot')),
         'services': services,
         'connections': connections,
-        'internal': internal,
     }
 
 
-def _connection_cron_lines(topology, profile):
-    """Expand a host's connection profile into concrete crontab lines.
+def _dedupe_exclusive_services(services):
+    """Drop services that would conflict within a mutually-exclusive group."""
+    selected_groups = set()
+    result = []
+    for service_id in services:
+        group = _service_group_of(service_id)
+        if group and group in selected_groups:
+            continue
+        if group:
+            selected_groups.add(group)
+        result.append(service_id)
+    return result
 
-    Internal connections resolve {target} to the name of a host in the
-    topology that provides the required service role.
+def _normalize_connections(connections, internal=None):
+    """Unify profile connections (external + internal) into list of instances.
+
+    Each instance: {"id", "target", "interval"}. `target` is the specific
+    device hostname for internal connections ('' = fall back to role);
+    `interval` overrides the type default ('' = use the type default).
+    Accepts legacy list-of-ids and the old internal list-of-{id,target}.
+    """
+    result = []
+
+    def push(connection_id, target='', interval=''):
+        if connection_id not in CONNECTION_TYPES:
+            return
+        result.append({'id': connection_id, 'target': str(target or ''), 'interval': str(interval or '')})
+
+    for entry in connections or []:
+        if isinstance(entry, dict):
+            push(entry.get('id'), entry.get('target'), entry.get('interval'))
+        elif isinstance(entry, str):
+            push(entry)
+
+    for entry in internal or []:
+        if isinstance(entry, dict):
+            push(entry.get('id'), entry.get('target'), entry.get('interval'))
+        elif isinstance(entry, str):
+            push(entry)
+
+    # keep only internal-scoped entries normalised already; dedupe exact (id,target)
+    seen = set()
+    deduped = []
+    for conn in result:
+        key = (conn['id'], conn['target'], conn['interval'])
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(conn)
+    return deduped
+
+
+def _connection_cron_lines(topology, profile):
+    """Expand a host's connection instances into concrete crontab lines.
+
+    External connections have fixed commands. Internal connections resolve
+    {target} to the *specific* device (hostname) chosen for that connection;
+    if no device was chosen, fall back to any host that provides the required
+    service role. Each instance may carry its own interval override.
     """
     lines = []
     role_to_host = {}
+    targets = set()
     for net in topology.get('networks', []):
-        for host in net.get('hosts', []):
+        for host in expand_repeats(net.get('hosts', [])):
+            targets.add(host['name'])
             hprofile = host.get('profile') or {}
             for svc in hprofile.get('services', []):
                 role_to_host.setdefault(svc, host['name'])
-    for cid in list(profile.get('connections', [])) + list(profile.get('internal', [])):
-        ct = CONNECTION_TYPES.get(cid)
+    for entry in profile.get('connections', []):
+        ct = CONNECTION_TYPES.get(entry.get('id'))
         if not ct:
             continue
         command = ct['command']
+        interval = entry.get('interval') or ct.get('interval') or '* * * * *'
         target_role = ct.get('target_role')
         if target_role:
-            command = command.replace('{target}', role_to_host.get(target_role, 'localhost'))
-        lines.append(f"{ct['interval']} {command}")
+            target = entry.get('target') or ''
+            if target not in targets:
+                target = role_to_host.get(target_role, 'localhost')
+            command = command.replace('{target}', target)
+        lines.append(f"{interval} {command}")
     return lines
 
 
@@ -232,7 +372,7 @@ def node_config(topology, host, profile, peer_names):
             out.append('RUN_WEB=1')
     if profile.get('services'):
         out.append(f"SERVICES='{','.join(profile['services'])}'")
-    cron = [line for line in (host.get('cronjobs') or []) + _connection_cron_lines(topology, profile) if line.strip()]
+    cron = [line for line in _connection_cron_lines(topology, profile) if line.strip()]
     if cron:
         out.append(f"EXTRA_CRON='{chr(10).join(cron)}'")
     return '\n'.join(out) + ('\n' if out else '')
@@ -243,7 +383,7 @@ def peer_names_of(topology):
     return [
         h['name']
         for net in topology.get('networks', [])
-        for h in net.get('hosts', [])
+        for h in expand_repeats(net.get('hosts', []))
         if (h.get('profile') or {}).get('slips_variant', 'none') != 'none'
     ]
 
@@ -265,6 +405,9 @@ INDEX_HTML = r"""<!doctype html>
         --accent: #1167b1;
         --danger: #a93226;
         --ok: #18794e;
+        --fed: #e07b1f;
+        --fed-strong: #c96a10;
+        --fed-bg: #fdf1e3;
       }
       * { box-sizing: border-box; }
       html, body {
@@ -319,6 +462,44 @@ INDEX_HTML = r"""<!doctype html>
         border-color: var(--danger);
         background: var(--danger);
       }
+      /* Federation-branch additions are tinted orange to separate them from
+         the original plugin's blue/white chrome. */
+      button.fed {
+        border: 1px solid var(--fed-strong);
+        background: var(--fed);
+        color: white;
+      }
+      button.fed.secondary {
+        background: var(--fed-bg);
+        color: var(--fed-strong);
+        border-color: var(--fed);
+      }
+      .fed-field input, .fed-field select, .fed-field textarea {
+        border-color: var(--fed);
+        background: var(--fed-bg);
+      }
+      .fed-field label {
+        color: #9a4f0a;
+      }
+      .fed-box {
+        border: 1px solid var(--fed);
+        background: var(--fed-bg);
+        border-radius: 8px;
+        padding: 10px;
+      }
+      .fed-box h5 {
+        color: var(--fed-strong);
+        margin: 0 0 8px;
+      }
+      .combo-row {
+        display: flex;
+        gap: 6px;
+        align-items: center;
+        margin-bottom: 6px;
+      }
+      .combo-row select, .combo-row input { flex: 1 1 0; }
+      .combo-row button { white-space: nowrap; }
+      .conn-editor { margin-top: 2px; }
       button:disabled {
         opacity: .55;
         cursor: not-allowed;
@@ -676,8 +857,8 @@ INDEX_HTML = r"""<!doctype html>
         font-size: 12px;
       }
       textarea.json {
-        min-height: 360px;
-        max-height: 760px;
+        min-height: 120px;
+        max-height: 300px;
         resize: vertical;
         font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
         white-space: pre;
@@ -734,7 +915,7 @@ INDEX_HTML = r"""<!doctype html>
         <div class="toolbar">
           <button id="saveTopology">Save topology</button>
           <button class="secondary" id="newTopology">New</button>
-          <button class="secondary" id="buildImages" title="Build the federation_network-* runtime images">Build images</button>
+          <button class="fed secondary" id="buildImages" title="Build the federation_network-* runtime images">Build images</button>
         </div>
       </header>
       <div class="grid">
@@ -892,32 +1073,45 @@ INDEX_HTML = r"""<!doctype html>
         }).join('');
       }
 
-      function defaultNetworks(count = 3, hostsPerNetwork = 3) {
-        const names = ['dmz', 'corp', 'admin', 'data', 'lab', 'guest', 'ops', 'dev'];
-        return Array.from({ length: count }, (_, i) => {
-          const roles = i === 0 ? ['web-server', 'file-server', 'normal-user']
-            : i === 1 ? ['normal-user', 'db', 'log-server']
-            : i === 2 ? ['domain-admin', 'jump-box', 'normal-user']
-            : ['normal-user', 'web-server', 'db'];
-          return {
-            id: `net${i + 1}`,
-            name: names[i] || `net${i + 1}`,
-            cidr: `10.77.${i + 1}.0/24`,
-            internet: i === 0,
-            hosts: Array.from({ length: hostsPerNetwork }, (_, h) => ({
-              id: `h${i + 1}_${h + 1}`,
-              name: `${names[i] || `net${i + 1}`}-${h + 1}`,
-              type: roles[h % roles.length],
-              image: 'ubuntu:24.04',
-              ssh_enabled: false,
-              username: h === 0 && i === 2 ? 'admin' : 'student',
-              password: h === 0 && i === 2 ? 'StratoAdmin!23' : 'strato',
-              generate_data: ['web-server', 'file-server', 'db', 'log-server'].includes(roles[h % roles.length]),
-              data_prompt: '',
-              data_content: ''
-            }))
-          };
-        });
+      function defaultNetworks() {
+        // A single federation network: 3 SLIPS peers (weak/middle/strong) plus
+        // the service devices. No separate victim/target network. SSH creds
+        // mirror the original runner (admin admin / slips admin G9!...).
+        const slipsUser = 'admin', slipsPass = 'G9!tR4#vX7@cM2$kP8n';
+        const svcUser = 'admin', svcPass = 'admin';
+        const net = {
+          id: 'network1',
+          name: 'Federation',
+          cidr: '10.77.1.0/24',
+          internet: true,
+          hosts: [
+            { id: 'slips-weak', name: 'slips-weak', type: 'normal-user', image: 'ubuntu:24.04',
+              ssh_enabled: true, username: slipsUser, password: slipsPass, generate_data: false,
+              data_prompt: '', data_content: '', repeats: 1,
+              profile: { slips_variant: 'weak', attacker_pivot: false, services: [], connections: [] } },
+            { id: 'slips-middle', name: 'slips-middle', type: 'normal-user', image: 'ubuntu:24.04',
+              ssh_enabled: true, username: slipsUser, password: slipsPass, generate_data: false,
+              data_prompt: '', data_content: '', repeats: 1,
+              profile: { slips_variant: 'middle', attacker_pivot: false, services: [], connections: [] } },
+            { id: 'slips-strong', name: 'slips-strong', type: 'normal-user', image: 'ubuntu:24.04',
+              ssh_enabled: true, username: slipsUser, password: slipsPass, generate_data: false,
+              data_prompt: '', data_content: '', repeats: 1,
+              profile: { slips_variant: 'strong', attacker_pivot: false, services: [], connections: [] } },
+            { id: 'ftp-1', name: 'ftp-1', type: 'normal-user', image: 'ubuntu:24.04',
+              ssh_enabled: true, username: svcUser, password: svcPass, generate_data: false,
+              data_prompt: '', data_content: '', repeats: 1,
+              profile: { slips_variant: 'none', attacker_pivot: false, services: ['ftp'], connections: [] } },
+            { id: 'web-1', name: 'web-1', type: 'normal-user', image: 'ubuntu:24.04',
+              ssh_enabled: true, username: svcUser, password: svcPass, generate_data: false,
+              data_prompt: '', data_content: '', repeats: 1,
+              profile: { slips_variant: 'none', attacker_pivot: false, services: ['web'], connections: [] } },
+            { id: 'snmp-1', name: 'snmp-1', type: 'normal-user', image: 'ubuntu:24.04',
+              ssh_enabled: true, username: svcUser, password: svcPass, generate_data: false,
+              data_prompt: '', data_content: '', repeats: 1,
+              profile: { slips_variant: 'none', attacker_pivot: false, services: ['snmp'], connections: [] } },
+          ],
+        };
+        return [net];
       }
 
       function defaultRouters() {
@@ -943,8 +1137,8 @@ INDEX_HTML = r"""<!doctype html>
         return allowed;
       }
 
-      function resetModel(count = 3, hosts = 3) {
-        const nets = defaultNetworks(count, hosts);
+      function resetModel() {
+        const nets = defaultNetworks();
         const routers = defaultRouters();
         nets.forEach((network) => {
           network.router_ids = [routers[0].id];
@@ -1221,7 +1415,7 @@ INDEX_HTML = r"""<!doctype html>
         return Object.entries(registry)
           .filter(([, info]) => !scope || info.scope === scope)
           .map(([id, info]) =>
-            `<label class="checkbox-line"><input data-field="${field}" type="checkbox" value="${id}" ${sel.has(id) ? 'checked' : ''}> ${escapeHtml(info.label)}</label>`
+            `<label class="checkbox-line" data-group="${info.group || ''}"><input data-field="${field}" type="checkbox" value="${id}" data-group="${info.group || ''}" ${sel.has(id) ? 'checked' : ''}> ${escapeHtml(info.label)}</label>`
           ).join('');
       }
 
@@ -1229,10 +1423,111 @@ INDEX_HTML = r"""<!doctype html>
         return Array.from(root.querySelectorAll(`[data-field="${field}"]:checked`)).map((el) => el.value);
       }
 
+      function collectConnections(root) {
+        // Read the connection editor rows into unified [{id,target,interval}] list.
+        const results = [];
+        root.querySelectorAll('[data-connection-row]').forEach((row) => {
+          const raw = valueOf(row, 'profile.connection_type');
+          if (!raw) return;
+          const { id, target } = parseConnOption(raw);
+          results.push({
+            id,
+            target,
+            interval: valueOf(row, 'profile.connection_interval'),
+          });
+        });
+        return results;
+      }
+
+      function allHostNames() {
+        const names = [];
+        (model?.networks || []).forEach((net) => (net.hosts || []).forEach((host) => names.push(host.name)));
+        return names;
+      }
+
+      // Encode a connection option as "type" (external) or "type|target" (internal).
+      function connOption(id, target) {
+        return target ? `${id}|${target}` : id;
+      }
+
+      function parseConnOption(raw) {
+        const [id, target = ''] = String(raw || '').split('|');
+        return { id, target };
+      }
+
+      function serviceRoleHosts() {
+        // role -> [hostname...] for every device currently running that service,
+        // so the connection dropdown only offers reachable service targets.
+        const map = {};
+        (model?.networks || []).forEach((net) => (net.hosts || []).forEach((host) => {
+          (host.profile?.services || []).forEach((svc) => {
+            (map[svc] = map[svc] || []).push(host.name);
+          });
+        }));
+        return map;
+      }
+
+      function connOptionList() {
+        // A single combined dropdown list: every external connection loaded from
+        // connections.json, plus one entry per internal connection for each
+        // currently-running target service device.
+        const hosts = allHostNames();
+        const byRole = serviceRoleHosts();
+        const opts = [];
+        Object.entries(CONNECTION_TYPES).forEach(([id, info]) => {
+          if (info.scope === 'external') {
+            opts.push({ value: connOption(id, ''), label: info.label, id, target: '' });
+          } else {
+            const targets = byRole[info.target_role]?.length ? byRole[info.target_role] : hosts;
+            const base = (info.label || id).replace(/\s*\(internal\)\s*$/, '');
+            (targets.length ? targets : [hosts[0] || '']).forEach((t) => {
+              opts.push({ value: connOption(id, t), label: `${base} → ${t}`, id, target: t });
+            });
+          }
+        });
+        return opts;
+      }
+
+      function connOptionHtml(selectedRaw) {
+        const selected = connOptionList().find((o) => o.value === selectedRaw);
+        const withSelection = selected ? [selected] : [];
+        const list = connOptionList();
+        const opts = list.map((o) => {
+          const isSel = o.value === selectedRaw || (!selected && !selectedRaw && false);
+          return `<option value="${escapeHtml(o.value)}" ${(selected && selected.value === o.value) || (!selectedRaw && o.value === '') ? 'selected' : ''}>${escapeHtml(o.label)}</option>`;
+        }).join('');
+        return `${selectedRaw ? '' : ''}${opts}`;
+      }
+
+      function connectionEditor(profile, networkIndex, hostIndex) {
+        const conns = profile.connections || [];
+        const rows = conns.map((c, i) => {
+          const info = CONNECTION_TYPES[c.id] || { label: c.id, interval: '*' };
+          const isInternal = info.scope === 'internal';
+          const selectedRaw = connOption(c.id, isInternal ? (c.target || '') : '');
+          return `<div class="combo-row" data-connection-row="${i}">
+              <select data-field="profile.connection_type" data-conn-index="${i}">${connOptionHtml(selectedRaw)}</select>
+              <input data-field="profile.connection_interval" data-conn-index="${i}" placeholder="${escapeHtml(info.interval || '* * * * *')}" value="${escapeHtml(c.interval || '')}">
+              <button class="danger" data-action="remove-connection" data-network-index="${networkIndex}" data-host-index="${hostIndex}" data-conn-index="${i}">Remove</button>
+            </div>`;
+        }).join('');
+        return `
+          <div class="conn-editor fed-field">
+            <label>Connections</label>
+            ${rows || '<p class="muted" style="margin:2px 0 8px">No connections.</p>'}
+            <div class="combo-row">
+              <select data-field="profile.addconn_type">${connOptionHtml('')}</select>
+              <input data-field="profile.addconn_interval" placeholder="*/5 * * * *">
+              <button class="fed" data-action="add-connection" data-network-index="${networkIndex}" data-host-index="${hostIndex}">Add</button>
+            </div>
+            <p class="muted" style="font-size:12px">Pick a running service or external connection, set how often (cron), then Add.</p>
+          </div>`;
+      }
+
       function hostTemplate(host, networkIndex, hostIndex) {
         const network = model.networks[networkIndex];
         const hostIp = network ? networkHostIp(network.cidr, hostIndex + 1) : '';
-        const profile = Object.assign({ slips_variant: 'none', attacker_pivot: false, services: [], connections: [], internal: [] }, host.profile || {});
+        const profile = Object.assign({ slips_variant: 'none', attacker_pivot: false, services: [], connections: [] }, host.profile || {});
         return `
           <div class="host" data-host="${hostIndex}">
             <div class="host-head">
@@ -1250,18 +1545,15 @@ INDEX_HTML = r"""<!doctype html>
               </div>
               <div class="span-2">
                 <label>SSH user</label>
-                <input data-field="host.username" value="${escapeHtml(host.username || 'student')}">
+                <input data-field="host.username" value="${escapeHtml(host.username || (profile.slips_variant !== 'none' ? 'admin' : 'admin'))}">
               </div>
               <div class="span-2">
                 <label>SSH password</label>
-                <input data-field="host.password" value="${escapeHtml(host.password || 'strato')}">
+                <input data-field="host.password" value="${escapeHtml(host.password || (profile.slips_variant !== 'none' ? 'G9!tR4#vX7@cM2$kP8n' : 'admin'))}">
               </div>
-              <div class="span-2">
-                <label>AI data</label>
-                <div class="checkbox-line">
-                  <input data-field="host.generate_data" type="checkbox" ${host.generate_data ? 'checked' : ''}>
-                  <span>Use</span>
-                </div>
+              <div class="span-2 fed-field">
+                <label>Repeats</label>
+                <input data-field="host.repeats" type="number" min="1" max="50" value="${host.repeats || 1}">
               </div>
               <div class="span-12">
                 <label class="checkbox-line" style="margin: 0">
@@ -1273,39 +1565,26 @@ INDEX_HTML = r"""<!doctype html>
                 <input data-field="host.run_web" type="checkbox" ${host.run_web ? 'checked' : ''}>
                 <span>Run web traffic generator (cron job)</span>
               </label></div>` : ''}
-              <div class="span-12 profile-box">
-                <h5>Machine profile</h5>
+              <div class="span-12 profile-box fed-box">
+                <h5>Machine profile (federation)</h5>
                 <div class="row">
-                  <div class="span-4">
+                  <div class="span-4 fed-field">
                     <label>SLIPS variant</label>
                     <select data-field="profile.slips_variant">${Object.keys(SLIPS_PROFILES).map((v) => `<option value="${v}" ${v === profile.slips_variant ? 'selected' : ''}>${SLIPS_PROFILES[v].label}</option>`).join('')}</select>
                   </div>
-                  <div class="span-4">
+                  <div class="span-4 fed-field">
                     <label class="checkbox-line" style="margin:0"><input data-field="profile.attacker_pivot" type="checkbox" ${profile.attacker_pivot ? 'checked' : ''}> Attacker pivot (max 1)</label>
                   </div>
                 </div>
                 <div class="row">
-                  <div class="span-4"><label>Services</label>${profChecks(SERVICES, 'profile.services', profile.services)}</div>
-                  <div class="span-4"><label>Connections (external)</label>${profChecks(CONNECTION_TYPES, 'profile.connections', profile.connections, 'external')}</div>
-                  <div class="span-4"><label>Connections (internal)</label>${profChecks(CONNECTION_TYPES, 'profile.internal', profile.internal, 'internal')}</div>
+                  <div class="span-6 fed-field"><label>Services</label>${profChecks(SERVICES, 'profile.services', profile.services)}</div>
+                  <div class="span-6 fed-field">${connectionEditor(profile, networkIndex, hostIndex)}</div>
                 </div>
               </div>
-              <div class="span-12">
-                <label>Cron jobs (one per line, appended to profile connections)</label>
-                <textarea data-field="host.cronjobs" rows="2">${escapeHtml((host.cronjobs || []).join('\\n'))}</textarea>
-              </div>
-              <div class="span-8">
-                <label>Data prompt</label>
-                <input data-field="host.data_prompt" placeholder="Example: internal invoices for a fake finance department" value="${escapeHtml(host.data_prompt || '')}">
-              </div>
-              <div class="span-4 toolbar">
-                <button class="secondary" data-action="duplicate-host" data-network-index="${networkIndex}" data-host-index="${hostIndex}">Add +1</button>
-                <button class="secondary" data-action="generate-host-data" data-network-index="${networkIndex}" data-host-index="${hostIndex}">Generate data</button>
+              <div class="span-12 toolbar">
+                <button class="fed secondary" data-action="generate-host-data" data-network-index="${networkIndex}" data-host-index="${hostIndex}">Regenerate data</button>
                 <button class="danger" data-action="remove-host" data-network-index="${networkIndex}" data-host-index="${hostIndex}">Remove</button>
-              </div>
-              <div class="span-12">
-                <label>Data content</label>
-                <textarea data-field="host.data_content">${escapeHtml(host.data_content || '')}</textarea>
+                <span class="muted">${escapeHtml(host.data_prompt || '')}</span>
               </div>
             </div>
           </div>
@@ -1614,20 +1893,19 @@ INDEX_HTML = r"""<!doctype html>
                 ...host,
                 name: valueOf(hostEl, 'host.name') || host.name,
                 type: valueOf(hostEl, 'host.type') || host.type,
-                username: valueOf(hostEl, 'host.username') || 'student',
-                password: valueOf(hostEl, 'host.password') || 'strato',
+                username: valueOf(hostEl, 'host.username') || 'admin',
+                password: valueOf(hostEl, 'host.password') || 'admin',
                 ssh_enabled: checkedOf(hostEl, 'host.ssh_enabled'),
                 generate_data: checkedOf(hostEl, 'host.generate_data'),
                 data_prompt: valueOf(hostEl, 'host.data_prompt'),
                 data_content: valueOf(hostEl, 'host.data_content'),
                 run_web: checkedOf(hostEl, 'host.run_web'),
-                cronjobs: (valueOf(hostEl, 'host.cronjobs') || '').split('\\n').filter((s) => s.trim()),
+                repeats: Math.max(1, Number(valueOf(hostEl, 'host.repeats')) || 1),
                 profile: {
                   slips_variant: valueOf(hostEl, 'profile.slips_variant') || 'none',
                   attacker_pivot: checkedOf(hostEl, 'profile.attacker_pivot'),
                   services: checkedValues(hostEl, 'profile.services'),
-                  connections: checkedValues(hostEl, 'profile.connections'),
-                  internal: checkedValues(hostEl, 'profile.internal'),
+                  connections: collectConnections(hostEl),
                 },
               };
             });
@@ -1707,9 +1985,10 @@ INDEX_HTML = r"""<!doctype html>
             </h3>
             <p>${item.networks} network(s), ${item.hosts} host(s)</p>
             <div class="toolbar">
-              <button class="secondary" data-action="load-topology" data-id="${item.id}" ${busyTopologyId ? 'disabled' : ''}>Load</button>
+              <button class="secondary" data-action="load-topology" data-id="${item.id}" ${busyTopologyId ? 'disabled' : ''}>Open</button>
               <button data-action="start-topology" data-id="${item.id}" ${busyTopologyId ? 'disabled' : ''}>${busyTopologyId === item.id && busyTopologyAction === 'Starting topology' ? 'Starting...' : 'Start'}</button>
               <button class="secondary" data-action="stop-topology" data-id="${item.id}" ${busyTopologyId ? 'disabled' : ''}>${busyTopologyId === item.id && busyTopologyAction === 'Stopping topology' ? 'Stopping...' : 'Stop'}</button>
+              <button class="danger" data-action="delete-topology" data-id="${item.id}">Delete</button>
             </div>
           </div>
         `).join('') : '<p class="muted">No saved topologies yet.</p>';
@@ -1732,6 +2011,22 @@ INDEX_HTML = r"""<!doctype html>
         model = result.topology;
         setStatus(`Loaded ${model.name}.`);
         render();
+      }
+
+      async function deleteTopology(id) {
+        const item = saved.find((s) => s.id === id);
+        if (!window.confirm(`Delete topology "${item ? item.name : id}"? This removes the saved topology (and stops it if running).`)) return;
+        setStatus(`Deleting ${item ? item.name : id}...`);
+        try {
+          await api(`api/topologies/${encodeURIComponent(id)}`, { method: 'DELETE' });
+          setStatus('Topology deleted.');
+        } finally {
+          if (selectedId === id) {
+            selectedId = null;
+            resetModel();
+          }
+          await refreshSaved();
+        }
       }
 
       async function startTopology(id) {
@@ -1845,6 +2140,24 @@ INDEX_HTML = r"""<!doctype html>
 
       document.addEventListener('input', (event) => {
         if (!event.target.matches('input, select, textarea')) return;
+        const group = event.target.dataset.group;
+        if (group && event.target.type === 'checkbox' && event.target.checked) {
+          // mutually exclusive services (e.g. snmp vs web) within a group
+          const hostRoot = event.target.closest('[data-host]');
+          if (hostRoot) {
+            hostRoot.querySelectorAll(`input[data-field="${event.target.dataset.field}"][data-group="${group}"]`).forEach((other) => {
+              if (other !== event.target) other.checked = false;
+            });
+          }
+        }
+        // The connection "add" row holds a *prospective* connection (type +
+        // target + interval) that isn't part of the model until "Add" is
+        // clicked. Editing it must not re-render, otherwise the dropdown
+        // selection is wiped back to the default.
+        if (/^profile\.addconn_/.test(event.target.dataset.field || '')) {
+          collect();
+          return;
+        }
         collect();
         if (
           event.target.closest('[data-network]') ||
@@ -1865,24 +2178,24 @@ INDEX_HTML = r"""<!doctype html>
           if (event.target.id === 'buildImages') return buildImages();
           if (event.target.id === 'newTopology') {
             selectedId = null;
-            resetModel(Number(networkCount.value) || 3, Number(defaultHosts.value) || 3);
+            resetModel();
             return;
           }
           if (event.target.id === 'rebuildNetworks') {
             selectedId = null;
-            resetModel(Number(networkCount.value) || 3, Number(defaultHosts.value) || 3);
+            resetModel();
             return;
           }
           if (event.target.id === 'balancedPreset') {
             topologyName.value = 'Balanced three-zone lab';
             selectedId = null;
-            resetModel(3, 3);
+            resetModel();
             return;
           }
           if (event.target.id === 'enterprisePreset') {
             topologyName.value = 'Enterprise segmented lab';
             selectedId = null;
-            resetModel(5, 4);
+            resetModel();
             return;
           }
           if (event.target.id === 'hackerlabNetwork') {
@@ -1921,6 +2234,32 @@ INDEX_HTML = r"""<!doctype html>
             const i = Number(event.target.dataset.networkIndex);
             const current = model.networks[i].hosts;
             current.push({ id: `h${i + 1}_${current.length + 1}`, name: `${model.networks[i].name}-${current.length + 1}`, type: 'normal-user', image: 'ubuntu:24.04', ssh_enabled: false, username: 'student', password: 'strato', generate_data: false, data_prompt: '', data_content: '' });
+            render();
+          }
+          if (action === 'add-connection') {
+            collect();
+            const i = Number(event.target.dataset.networkIndex);
+            const hostEl = event.target.closest('[data-host]');
+            const hostIdx = Number(event.target.dataset.hostIndex);
+            const host = model.networks[i].hosts[hostIdx];
+            const id = valueOf(hostEl, 'profile.addconn_type');
+            if (!id) return setStatus('Pick a connection type first.');
+            host.profile = host.profile || {};
+            host.profile.connections = host.profile.connections || [];
+            host.profile.connections.push({
+              id,
+              target: valueOf(hostEl, 'profile.addconn_target'),
+              interval: valueOf(hostEl, 'profile.addconn_interval'),
+            });
+            render();
+          }
+          if (action === 'remove-connection') {
+            collect();
+            const i = Number(event.target.dataset.networkIndex);
+            const hostIdx = Number(event.target.dataset.hostIndex);
+            const idx = Number(event.target.dataset.connIndex);
+            const host = model.networks[i].hosts[hostIdx];
+            (host.profile?.connections || []).splice(idx, 1);
             render();
           }
           if (action === 'delete-network') {
@@ -2003,26 +2342,9 @@ INDEX_HTML = r"""<!doctype html>
             model.networks[Number(event.target.dataset.networkIndex)].hosts.splice(Number(event.target.dataset.hostIndex), 1);
             render();
           }
-          if (action === 'duplicate-host') {
-            collect();
-            const net = model.networks[Number(event.target.dataset.networkIndex)];
-            const src = net.hosts[Number(event.target.dataset.hostIndex)];
-            const baseName = (src.name || 'host').replace(/-\d+$/, '');
-            let next = net.hosts.length + 1;
-            let hostId = `${src.id || baseName}-${next}`;
-            const ids = new Set(net.hosts.map((h) => h.id));
-            while (ids.has(hostId)) { next += 1; hostId = `${src.id || baseName}-${next}`; }
-            const copy = JSON.parse(JSON.stringify(src));
-            copy.id = `${src.id || baseName}-${next}`;
-            copy.name = `${baseName}-${next}`;
-            copy.profile = Object.assign({}, src.profile || {});
-            // a duplicated device can never be the (single) attacker pivot
-            copy.profile.attacker_pivot = false;
-            net.hosts.splice(Number(event.target.dataset.hostIndex) + 1, 0, copy);
-            render();
-          }
           if (action === 'generate-host-data') return generateHostData(Number(event.target.dataset.networkIndex), Number(event.target.dataset.hostIndex));
           if (action === 'load-topology') return loadTopology(event.target.dataset.id);
+          if (action === 'delete-topology') return deleteTopology(event.target.dataset.id);
           if (action === 'start-topology') return startTopology(event.target.dataset.id);
           if (action === 'stop-topology') return stopTopology(event.target.dataset.id);
           if (action === 'toggle-firewall' || firewallEl) {
@@ -2132,7 +2454,7 @@ def validate_topology(topology):
         network['id'] = normalize_identifier(network.get('id'), f'net{index}')
         network['name'] = str(network.get('name') or network['id']).strip()
         network['cidr'] = str(network.get('cidr') or f'10.77.{index}.0/24').strip()
-        network['internet'] = bool(network.get('internet'))
+        network['internet'] = bool(network.get('internet', True))
         if network['id'] in seen_networks:
             raise ValueError(f"Duplicate network id '{network['id']}'.")
         seen_networks.add(network['id'])
@@ -2146,14 +2468,20 @@ def validate_topology(topology):
             host['name'] = normalize_identifier(host.get('name'), f'{network["id"]}-{host_index}')
             host['type'] = host.get('type') if host.get('type') in HOST_TYPES else 'normal-user'
             host['image'] = 'ubuntu:24.04'
-            host['username'] = normalize_identifier(host.get('username'), 'student')
-            host['password'] = str(host.get('password') or 'strato')
             host['generate_data'] = bool(host.get('generate_data'))
             host['data_prompt'] = str(host.get('data_prompt') or '')
             host['data_content'] = str(host.get('data_content') or '')
-            host['cronjobs'] = host.get('cronjobs') if isinstance(host.get('cronjobs'), list) else []
+            try:
+                host['repeats'] = max(1, int(host.get('repeats') or 1))
+            except (TypeError, ValueError):
+                host['repeats'] = 1
+            if host['repeats'] > 50:
+                host['repeats'] = 50
             host['run_web'] = bool(host.get('run_web'))
             host['profile'] = _normalize_profile(host.get('profile'))
+            default_user, default_pass = default_credentials(host['profile'])
+            host['username'] = normalize_identifier(host.get('username'), default_user)
+            host['password'] = str(host.get('password') or default_pass)
         legacy_router_id = network.get('router_id')
         router_ids = network.get('router_ids')
         if not isinstance(router_ids, list):
@@ -2567,7 +2895,7 @@ def generate_compose(topology):
         network_key = f'topo_{network["id"]}'
         gateway_router_id = network.get('default_router_id') or network.get('router_ids', [root_router_id])[0]
         gateway_ip = network_router_ip_maps[network['id']].get(gateway_router_id, router_ip(network['cidr']))
-        for host_index, host in enumerate(network['hosts'], start=1):
+        for host_index, host in enumerate(expand_repeats(network['hosts']), start=1):
             service_name = f'{network["id"]}-{host["id"]}'
             profile = host.get('profile') or {}
             managed = is_managed_node(profile)
@@ -2606,8 +2934,7 @@ def generate_compose(topology):
                 svc['entrypoint'] = ['sh', '-lc', f"{write_block}exec {node_entrypoint(profile)}"]
             else:
                 svc['command'] = ['sh', '-lc', host_script(topology, network, host, host_index, gateway_ip)]
-                cron_lines = list(host.get('cronjobs') or [])
-                cron_lines += _connection_cron_lines(topology, profile)
+                cron_lines = _connection_cron_lines(topology, profile)
                 cronjobs = [line for line in cron_lines if line.strip()]
                 if cronjobs:
                     cron_prefix = 'echo "' + '\\n'.join(cronjobs) + '" | crontab - 2>/dev/null; service cron start 2>/dev/null; '
@@ -2901,6 +3228,32 @@ class TopologyHandler(BaseHTTPRequestHandler):
             self.handle_post()
         except Exception as exc:
             self.send_json(500, {'error': str(exc)})
+
+    def do_DELETE(self):
+        try:
+            self.handle_delete()
+        except Exception as exc:
+            self.send_json(500, {'error': str(exc)})
+
+    def handle_delete(self):
+        parsed = urlsplit(self.path)
+        path = parsed.path.rstrip('/') or '/'
+        match = re.fullmatch(r'/api/topologies/([^/]+)', path)
+        if match:
+            topology_id = unquote(match.group(1))
+            tdir = topology_dir(topology_id)
+            if not tdir.exists() or not (tdir / 'topology.json').exists():
+                self.send_json(404, {'error': 'Topology not found'})
+                return
+            try:
+                stop_topology(topology_id)
+            except Exception:
+                pass
+            import shutil
+            shutil.rmtree(tdir, ignore_errors=True)
+            self.send_json(200, {'status': 'deleted'})
+            return
+        self.send_json(404, {'error': 'Not found'})
 
     def handle_get(self):
         parsed = urlsplit(self.path)

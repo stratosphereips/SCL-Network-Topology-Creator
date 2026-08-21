@@ -210,3 +210,170 @@ def test_generate_compose_all_hosts_present():
     comp = _generate()
     for key in ("slip-net-s1", "slip-net-s2", "slip-net-f1", "slip-net-n1"):
         assert key in comp["services"]
+
+
+# --------------------------------------------------------------------------
+# new federation behaviours: exclusive services, repeats, internal targets,
+# egress default
+# --------------------------------------------------------------------------
+def test_snmp_and_web_are_mutually_exclusive():
+    p = app._normalize_profile({"services": ["snmp", "web"]})
+    assert p["services"] in (["snmp"], ["web"])  # only first of the group kept
+
+    p = app._normalize_profile({"services": ["web", "snmp"]})
+    assert p["services"] == ["web"]  # first occurrence retained, snmp dropped
+
+
+def test_internal_connections_normalized_with_target():
+    p = app._normalize_profile({"internal": ["ftp_check", {"id": "web_internal", "target": "web-1"}]})
+    assert "internal" not in p  # folded into unified connections
+    entries = {e["id"]: e["target"] for e in p["connections"]}
+    assert entries == {"ftp_check": "", "web_internal": "web-1"}
+
+
+def test_connections_interval_override_preserved():
+    p = app._normalize_profile({"connections": [{"id": "wikipedia", "interval": "*/2 * * * *"}]})
+    assert p["connections"] == [{"id": "wikipedia", "target": "", "interval": "*/2 * * * *"}]
+
+
+def test_repeats_expansion_unique_names_and_ips():
+    topology = {
+        "name": "r",
+        "networks": [{
+            "id": "n", "cidr": "10.77.1.0/24", "internet": True, "hosts": [
+                {"id": "s1", "name": "slips-1", "type": "normal-user", "repeats": 3,
+                 "profile": {"slips_variant": "weak", "services": [], "connections": [], "internal": []}},
+            ],
+        }],
+        "routers": [{"id": "r1", "name": "core"}],
+    }
+    valid = app.validate_topology(topology)
+    valid["id"] = "rep"
+    comp = app.generate_compose(valid)
+    assert "n-s1" in comp["services"]
+    assert "n-s1-2" in comp["services"]
+    assert "n-s1-3" in comp["services"]
+    peers = app.peer_names_of(valid)
+    assert peers == ["slips-1", "slips-1-2", "slips-1-3"]
+
+
+def test_internal_target_resolves_to_explicit_device():
+    topology = {
+        "name": "t",
+        "networks": [{
+            "id": "n", "cidr": "10.77.1.0/24", "internet": True,
+            "hosts": [
+                {"id": "c1", "name": "client", "type": "normal-user",
+                 "profile": {"slips_variant": "none", "services": ["ftp"], "connections": [], "internal": []}},
+                {"id": "s1", "name": "scanner", "type": "normal-user", "repeats": 2,
+                 "profile": {"slips_variant": "none", "services": [], "connections": [],
+                             "internal": [{"id": "ftp_check", "target": "client"}]}},
+            ],
+        }],
+        "routers": [{"id": "r1", "name": "core"}],
+    }
+    valid = app.validate_topology(topology)
+    valid["id"] = "t"
+    host = valid["networks"][0]["hosts"][1]
+    cron = app._connection_cron_lines(valid, host["profile"])
+    assert any("check-ftp.sh client" in line for line in cron)
+
+
+# --------------------------------------------------------------------------
+# Docker multiplication (repeats): specs -> compose + node.conf baking
+# --------------------------------------------------------------------------
+def _repeat_topology():
+    return {
+        "name": "scale",
+        "networks": [{
+            "id": "fed", "cidr": "172.20.1.0/24", "internet": True,
+            "hosts": [
+                {"id": "s1", "name": "slips-1", "type": "normal-user", "repeats": 3,
+                 "profile": {"slips_variant": "weak", "services": [], "connections": [
+                     {"id": "wikipedia", "interval": "*/5 * * * *"}]}},
+                {"id": "f1", "name": "ftp-1", "type": "normal-user",
+                 "profile": {"slips_variant": "none", "services": ["ftp"], "connections": []}},
+            ],
+        }],
+        "routers": [{"id": "r1", "name": "core"}],
+    }
+
+
+def test_repeats_yield_one_docker_per_replica():
+    valid = app.validate_topology(_repeat_topology())
+    valid["id"] = "scale"
+    comp = app.generate_compose(valid)
+    # 3 slips replicas + 1 ftp + 1 router
+    slips_services = [k for k in comp["services"] if k.startswith("fed-s1")]
+    assert len(slips_services) == 3
+    for name in ("fed-s1", "fed-s1-2", "fed-s1-3"):
+        assert name in comp["services"]
+        assert comp["services"][name]["image"] == app.SLIPS_RUNTIME_IMAGE
+        ep = " ".join(comp["services"][name]["entrypoint"])
+        assert app.NODE_CONFIG_PATH in ep  # baked, not env
+        assert "environment" not in comp["services"][name]
+
+
+def test_repeats_each_replica_gets_unique_ip():
+    valid = app.validate_topology(_repeat_topology())
+    valid["id"] = "scale"
+    comp = app.generate_compose(valid)
+    net_key = "topo_fed"
+    ips = []
+    for k in ("fed-s1", "fed-s1-2", "fed-s1-3"):
+        ips.append(comp["services"][k]["networks"][net_key]["ipv4_address"])
+    assert len(set(ips)) == 3, f"replicas share IPs: {ips}"
+    # sequential allocation: .11, .12, .13
+    assert ips == ["172.20.1.11", "172.20.1.12", "172.20.1.13"], ips
+
+
+def test_repeats_peers_include_all_replicas():
+    valid = app.validate_topology(_repeat_topology())
+    valid["id"] = "scale"
+    peers = app.peer_names_of(valid)
+    assert peers == ["slips-1", "slips-1-2", "slips-1-3"]
+    # each replica's node.conf has the full peer list
+    for replica in ("slips-1", "slips-1-2", "slips-1-3"):
+        host = valid["networks"][0]["hosts"][0]
+        cfg = app.node_config(valid, {**host, "name": replica}, host["profile"], peers)
+        assert f"SLIPS_PEERS='slips-1,slips-1-2,slips-1-3'" in cfg, cfg
+
+
+def test_repeats_replica_cron_baked_everywhere():
+    valid = app.validate_topology(_repeat_topology())
+    valid["id"] = "scale"
+    peers = app.peer_names_of(valid)
+    for replica in ("slips-1", "slips-1-2", "slips-1-3"):
+        host = valid["networks"][0]["hosts"][0]
+        cfg = app.node_config(valid, {**host, "name": replica}, host["profile"], peers)
+        assert "*/5 * * * * internet-traffic.sh wikipedia" in cfg, cfg
+
+
+def test_repeats_replicas_are_never_attacker_pivot():
+    valid = app.validate_topology({
+        "name": "p",
+        "networks": [{"id": "n", "cidr": "10.77.1.0/24", "internet": True, "hosts": [
+            {"id": "h", "name": "h", "type": "normal-user", "repeats": 2,
+             "profile": {"slips_variant": "weak", "attacker_pivot": True, "services": [], "connections": []}},
+        ]}],
+        "routers": [{"id": "r1", "name": "core"}],
+    })
+    # original keeps attacker_pivot, its replica does not
+    assert valid["networks"][0]["hosts"][0]["profile"]["attacker_pivot"] is True
+    expanded = app.expand_repeats(valid["networks"][0]["hosts"])
+    assert expanded[0]["profile"]["attacker_pivot"] is True
+    assert expanded[1]["profile"]["attacker_pivot"] is False
+
+
+def test_egress_defaults_to_on():
+    topology = {"name": "e", "networks": [{"id": "n", "cidr": "10.77.1.0/24", "hosts": [
+        {"id": "h", "name": "h1", "type": "normal-user", "profile": {}}]}]}
+    valid = app.validate_topology(topology)
+    assert valid["networks"][0]["internet"] is True
+
+
+def test_repeats_default_to_1():
+    topology = {"name": "d", "networks": [{"id": "n", "cidr": "10.77.1.0/24", "hosts": [
+        {"id": "h", "name": "h1", "type": "normal-user"}]}]}
+    valid = app.validate_topology(topology)
+    assert valid["networks"][0]["hosts"][0]["repeats"] == 1
