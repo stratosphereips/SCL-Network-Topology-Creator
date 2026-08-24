@@ -36,6 +36,14 @@ EXPERIMENTS_ROOT=/data/scl-experiments docker compose up -d --build
 The Runner plugin reads these live logs for result collection (and also mounts
 `EXPERIMENTS_ROOT`, so no end-of-run `docker cp` is needed).
 
+### Static attacker device
+
+A node with `profile.role = "attacker"` is a **static attacker** device (image
+`federation_network-attacker`, built from `attacker-static/Dockerfile` in the
+build source). It runs `nmap -sS -A` + brute-forcing over its network subnet
+every 5 minutes — the deterministic part of the attack. The Aracne pivot
+(`attacker_pivot`) does the LLM-driven part. Add one to a network to scan it.
+
 ## Files
 
 - `metadata.json` describes the plugin for SCL plugin discovery.

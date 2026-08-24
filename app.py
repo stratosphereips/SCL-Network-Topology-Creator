@@ -66,6 +66,7 @@ GENERIC_ROLES = {'web-server', 'db', 'file-server', 'domain-admin', 'normal-user
 
 SLIPS_RUNTIME_IMAGE = 'federation_network-slips:latest'
 SERVICE_RUNTIME_IMAGE = 'federation_network-service:latest'
+STATIC_ATTACKER_IMAGE = 'federation_network-attacker:latest'
 
 
 def host_image(host_type):
@@ -75,6 +76,8 @@ def host_image(host_type):
 def node_image(profile):
     """Compose a node's image from its settings — no fused per-role type."""
     profile = profile or {}
+    if profile.get('role') == 'attacker':
+        return STATIC_ATTACKER_IMAGE
     if profile.get('slips_variant', 'none') != 'none':
         return SLIPS_RUNTIME_IMAGE
     if profile.get('services'):
@@ -84,6 +87,8 @@ def node_image(profile):
 
 def node_entrypoint(profile):
     profile = profile or {}
+    if profile.get('role') == 'attacker':
+        return '/usr/local/bin/static-attacker-entrypoint.sh'
     if profile.get('slips_variant', 'none') != 'none':
         return '/usr/local/bin/slips-entrypoint.sh'
     if profile.get('services'):
@@ -92,9 +97,12 @@ def node_entrypoint(profile):
 
 
 def is_managed_node(profile):
-    """A node is 'managed' (profile-composed) if it is a sensor or hosts services."""
+    """A node is 'managed' (profile-composed) if it is a sensor, a static
+    attacker, or hosts services."""
     profile = profile or {}
-    return profile.get('slips_variant', 'none') != 'none' or bool(profile.get('services'))
+    return (profile.get('role') == 'attacker' or
+            profile.get('slips_variant', 'none') != 'none' or
+            bool(profile.get('services')))
 
 
 # Default SSH credentials mirror the original federation runner (README /
@@ -260,6 +268,7 @@ def _normalize_profile(profile):
     services = _dedupe_exclusive_services(services)
     connections = _normalize_connections(profile.get('connections'), profile.get('internal'))
     return {
+        'role': profile.get('role') if profile.get('role') == 'attacker' else None,
         'slips_variant': slips_variant,
         'attacker_pivot': bool(profile.get('attacker_pivot')),
         'services': services,
@@ -1109,6 +1118,10 @@ INDEX_HTML = r"""<!doctype html>
               ssh_enabled: true, username: svcUser, password: svcPass, generate_data: false,
               data_prompt: '', data_content: '', repeats: 1,
               profile: { slips_variant: 'none', attacker_pivot: false, services: ['snmp'], connections: [] } },
+            { id: 'attacker-1', name: 'attacker-1', type: 'static-attacker', image: 'ubuntu:24.04',
+              ssh_enabled: false, username: 'admin', password: 'strato', generate_data: false,
+              data_prompt: '', data_content: '', repeats: 1,
+              profile: { role: 'attacker' } },
           ],
         };
         return [net];
@@ -2902,8 +2915,10 @@ def generate_compose(topology, log_name=None):
             profile = host.get('profile') or {}
             managed = is_managed_node(profile)
             is_sensor = profile.get('slips_variant', 'none') != 'none'
+            is_attacker = profile.get('role') == 'attacker'
             image = node_image(profile)
-            caps = ['NET_ADMIN', 'NET_RAW', 'SYS_ADMIN'] if is_sensor else ['NET_ADMIN']
+            caps = (['NET_ADMIN', 'NET_RAW', 'SYS_ADMIN'] if (is_sensor or is_attacker)
+                    else ['NET_ADMIN'])
             svc = {
                 'image': image,
                 'container_name': f'{project_prefix}-{service_name}',
@@ -2980,7 +2995,8 @@ def docker_command():
 
 
 # Managed federation runtime images that can be built from mounted build sources.
-FEDERATION_IMAGES = ['federation_network-slips', 'federation_network-service']
+FEDERATION_IMAGES = ['federation_network-slips', 'federation_network-service',
+                     'federation_network-attacker']
 # Host directory (mounted into the control plane) that contains the SLIPS/runner
 # project whose Dockerfiles build the federation_network-* images.
 BUILD_SOURCES = Path(os.environ.get('FEDERATION_BUILD_SOURCES', '/srv/federation-build'))
@@ -3067,6 +3083,12 @@ def build_federation_images():
         log.append('federation_network-slips: built')
     else:
         log.append('federation_network-slips: no build source (slips/slips.Dockerfile missing)')
+    if (BUILD_SOURCES / 'attacker-static' / 'Dockerfile').exists():
+        log.append(_docker_build('federation_network-attacker:latest',
+                                 str(BUILD_SOURCES / 'attacker-static' / 'Dockerfile')))
+        log.append('federation_network-attacker: built')
+    else:
+        log.append('federation_network-attacker: no build source (attacker-static/Dockerfile missing)')
     if not any('built' in line for line in log):
         raise RuntimeError(f'No build sources found under {BUILD_SOURCES}')
     return {'built': federation_images_status(), 'log': log}
