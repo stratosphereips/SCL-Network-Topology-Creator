@@ -9,6 +9,33 @@ It also lets you place the `hackerlab` container onto one selected network so yo
 Routers can be chained in a parent-child tree, and each network can be attached to several routers while choosing one of them as the default gateway.
 Firewall rules are edited in a clickable graph instead of a long checkbox list.
 
+### Live SLIPS runtime logs
+
+When a topology with SLIPS sensors is **started**, each peer's runtime logs
+(`/var/log/slips`, `/var/log/slips_output`) are **bind-mounted to the host in
+real time** — nothing else from the container is mounted. The host path is
+configurable per device (no hardcoded server path):
+
+```
+<EXPERIMENTS_ROOT>/<experiment>/<peer>/slips
+<EXPERIMENTS_ROOT>/<experiment>/<peer>/slips_output
+```
+
+- `EXPERIMENTS_ROOT` — host base dir (default `/var/lib/scl-experiments`). Set it
+  on the control plane env when deploying.
+- `<experiment>` — the `log_name` passed by the Runner plugin (`<id>/start` body)
+  or, when started without one, the topology name.
+- `<peer>` — the SLIPS peer hostname (`slips-1`, `slips-2`, …).
+
+Start the control plane with a custom base, e.g.:
+
+```bash
+EXPERIMENTS_ROOT=/data/scl-experiments docker compose up -d --build
+```
+
+The Runner plugin reads these live logs for result collection (and also mounts
+`EXPERIMENTS_ROOT`, so no end-of-run `docker cp` is needed).
+
 ## Files
 
 - `metadata.json` describes the plugin for SCL plugin discovery.

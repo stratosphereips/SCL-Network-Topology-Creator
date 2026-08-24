@@ -160,9 +160,25 @@ def test_generate_compose_managed_nodes_bake_config_via_entrypoint():
         # config is embedded in the entrypoint (writes node.conf then runs runtime)
         ep = " ".join(svc["entrypoint"])
         assert app.NODE_CONFIG_PATH in ep
-        # no env vars, no bind-mounts
+        # no env vars
         assert "environment" not in svc
-        assert "volumes" not in svc
+
+
+def test_generate_compose_sensors_mount_only_runtime_logs():
+    # Live runtime logs only: slips peers bind-mount exactly /var/log/slips and
+    # /var/log/slips_output into EXPERIMENTS_ROOT/<experiment>/<peer> — nothing
+    # else from the container is mounted.
+    comp = _generate()
+    for name in ("slip-net-s1", "slip-net-s2"):
+        svc = comp["services"][name]
+        vol = svc.get("volumes") or []
+        assert len(vol) == 2
+        assert any(v.endswith('/slips:/var/log/slips') for v in vol)
+        assert any(v.endswith('/slips_output:/var/log/slips_output') for v in vol)
+        assert all(v.startswith(app.EXPERIMENTS_ROOT) for v in vol)
+    # non-sensor managed nodes (services) get no bind-mounts
+    for name in ("slip-net-f1", "slip-net-n1"):
+        assert "volumes" not in comp["services"][name]
 
 
 def test_node_config_sensor():

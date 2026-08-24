@@ -2790,7 +2790,9 @@ def host_entrypoint_cmd(host_type):
     return 'tail -f /dev/null'
 
 
-def generate_compose(topology):
+def generate_compose(topology, log_name=None):
+    # Segment under EXPERIMENTS_ROOT where this run's SLIPS logs live.
+    log_rel = slugify(log_name) if log_name else slugify(topology.get('name') or topology.get('id') or 'lab')
     project_prefix = f"scl-topology-{topology['id']}"
     routers = topology.get('routers') or []
     if not routers:
@@ -2922,6 +2924,14 @@ def generate_compose(topology):
                     svc['cpus'] = resources['cpus']
                 if resources.get('mem'):
                     svc['mem_limit'] = resources['mem']
+                # Live runtime logs only: bind-mount each peer's /var/log/slips
+                # (+ its SLIPS output) to the host so logs are written in real
+                # time. Nothing else from the container is mounted.
+                peer_log = f'{EXPERIMENTS_ROOT}/{log_rel}/{host["name"]}'
+                svc['volumes'] = [
+                    f'{peer_log}/slips:/var/log/slips',
+                    f'{peer_log}/slips_output:/var/log/slips_output',
+                ]
             if managed:
                 # Node setup is baked into node.conf (the single source of truth)
                 # at boot via the entrypoint — no env vars, no host bind-mounts.
@@ -2974,6 +2984,13 @@ FEDERATION_IMAGES = ['federation_network-slips', 'federation_network-service']
 # Host directory (mounted into the control plane) that contains the SLIPS/runner
 # project whose Dockerfiles build the federation_network-* images.
 BUILD_SOURCES = Path(os.environ.get('FEDERATION_BUILD_SOURCES', '/srv/federation-build'))
+
+# Host base directory for live SLIPS runtime logs, written in real time by
+# bind-mounting each peer's /var/log/slips + /var/log/slips_output. The per-run
+# subpath is <EXPERIMENTS_ROOT>/<experiment>/<peer> (experiment = the log_name
+# passed by the runner, or the topology name). Configurable per device (no
+# hardcoded server path is baked anywhere).
+EXPERIMENTS_ROOT = os.environ.get('EXPERIMENTS_ROOT', '/var/lib/scl-experiments')
 
 
 def _load_build_services():
@@ -3118,10 +3135,11 @@ def run_compose(topology_id, args):
     return result.stdout
 
 
-def start_topology(topology_id):
+def start_topology(topology_id, log_name=None):
     ensure_base_image()
     topology = read_json(topology_path(topology_id))
-    compose = generate_compose(topology)
+    log_rel = slugify(log_name) if log_name else slugify(topology.get('name') or topology.get('id') or 'lab')
+    compose = generate_compose(topology, log_name=log_rel)
     with open(compose_path(topology_id), 'w', encoding='utf8') as file:
         json.dump(compose, file, indent=2)
         file.write('\n')
@@ -3131,7 +3149,7 @@ def start_topology(topology_id):
         pass
     run_compose(topology_id, ['up', '-d', '--remove-orphans'])
     sync_hackerlab_runtime(topology)
-    return {'status': 'started'}
+    return {'status': 'started', 'log_dir': f'{EXPERIMENTS_ROOT}/{log_rel}'}
 
 
 def stop_topology(topology_id):
@@ -3341,7 +3359,9 @@ class TopologyHandler(BaseHTTPRequestHandler):
             topology_id = unquote(match.group(1))
             action = match.group(2)
             if action == 'start':
-                job_id = start_job(lambda: start_topology(topology_id))
+                body = self.read_body()
+                log_name = (body.get('log_name') or body.get('experiment') or None)
+                job_id = start_job(lambda: start_topology(topology_id, log_name=log_name))
             else:
                 job_id = start_job(lambda: stop_topology(topology_id))
             self.send_json(202, {'job_id': job_id})
