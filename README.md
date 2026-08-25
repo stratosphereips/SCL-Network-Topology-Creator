@@ -47,6 +47,13 @@ LLM-driven part. Select one and place it on a network to scan it. The image is
 built by the topology plugin's "Build images" (it lives in this repo, not in a
 mounted build source).
 
+## Testing
+
+Hermetic unit suites (no Docker): `python3 -m pytest tests/test_backend.py tests/test_server.py tests/test_ui.py`.
+Validate the baked images build + run:
+`docker build -f attacker/Dockerfile -t federation_network-attacker:latest attacker/` (the static attacker, in this repo),
+and the federation images from the mounted build source. Full runbook: the Experiment Runner plugin's `docs/TESTING.md`.
+
 ## Files
 
 - `metadata.json` describes the plugin for SCL plugin discovery.

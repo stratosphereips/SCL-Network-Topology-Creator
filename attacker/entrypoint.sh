@@ -22,7 +22,7 @@ while true; do
   echo "===== $(date -u +%F\ %T) scanning $SUBNET =====" >> "$LOG"
   nmap -sS -A -sV \
     --top-ports 1000 \
-    --script=default,ssh-brute,ftp-brute,http-brute,htpasswd-brute \
+    --script=default,ssh-brute,ftp-brute,http-brute \
     --script-args "userdb=/root/users.txt,brute.firstonly=true" \
     --exclude 127.0.0.0/8,localhost \
     "$SUBNET" >> "$LOG" 2>&1 || true
