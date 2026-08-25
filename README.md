@@ -38,11 +38,14 @@ The Runner plugin reads these live logs for result collection (and also mounts
 
 ### Static attacker device
 
-A node with `profile.role = "attacker"` is a **static attacker** device (image
-`federation_network-attacker`, built from `attacker-static/Dockerfile` in the
-build source). It runs `nmap -sS -A` + brute-forcing over its network subnet
-every 5 minutes — the deterministic part of the attack. The Aracne pivot
-(`attacker_pivot`) does the LLM-driven part. Add one to a network to scan it.
+A node with **Type = *Static attacker*** (or `profile.role = "attacker"`) is a
+static attacker device. Its image `federation_network-attacker` is a **very
+basic Ubuntu + nmap** defined inside this plugin (`attacker/`), and runs
+`nmap -sS -A` + brute-forcing over its network subnet every 5 minutes — the
+deterministic part of the attack. The Aracne pivot (`attacker_pivot`) does the
+LLM-driven part. Select one and place it on a network to scan it. The image is
+built by the topology plugin's "Build images" (it lives in this repo, not in a
+mounted build source).
 
 ## Files
 

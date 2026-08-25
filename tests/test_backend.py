@@ -45,6 +45,37 @@ def test_node_image_sensor():
     assert app.node_image({"slips_variant": "strong"}) == app.SLIPS_RUNTIME_IMAGE
 
 
+def test_node_image_static_attacker():
+    assert app.node_image({"role": "attacker"}) == app.STATIC_ATTACKER_IMAGE
+    assert app.node_entrypoint({"role": "attacker"}) == '/usr/local/bin/static-attacker-entrypoint.sh'
+
+
+def test_static_attacker_type_maps_to_attacker_image():
+    payload = {
+        "name": "Att", "networks": [
+            {
+                "id": "net1", "name": "Att", "cidr": "10.77.1.0/24",
+                "hosts": [
+                    {"id": "a1", "name": "attack-1", "type": "static-attacker",
+                     "profile": {"services": [], "connections": [], "internal": []}},
+                ],
+            }
+        ],
+        "routers": [{"id": "r1", "name": "core"}],
+    }
+    valid = app.validate_topology(payload)
+    valid["id"] = "att-topo"
+    svc = app.generate_compose(valid)["services"]["net1-a1"]
+    # type static-attacker -> role attacker -> attacker image + raw-socket caps
+    assert svc["image"] == app.STATIC_ATTACKER_IMAGE
+    assert "NET_RAW" in svc["cap_add"]
+    assert "NET_ADMIN" in svc["cap_add"]
+    # it must never be treated as a slips peer
+    peers = [h["name"] for net in valid["networks"] for h in net["hosts"]
+             if (h.get("profile") or {}).get("slips_variant", "none") != "none"]
+    assert "attack-1" not in peers
+
+
 def test_node_image_service():
     assert app.node_image({"slips_variant": "none", "services": ["ftp"]}) == app.SERVICE_RUNTIME_IMAGE
 

@@ -59,6 +59,11 @@ HOST_TYPES = {
         'ports': ['514/tcp'],
         'description': 'Host prepared with log files for investigation.',
     },
+    'static-attacker': {
+        'label': 'Static attacker',
+        'ports': [],
+        'description': 'Very basic Ubuntu attacker running nmap -sS -A brute-force every 5 min.',
+    },
 }
 
 # Generic (plain base-image) role types — still driven by `type` + host_script.
@@ -2492,6 +2497,9 @@ def validate_topology(topology):
                 host['repeats'] = 50
             host['run_web'] = bool(host.get('run_web'))
             host['profile'] = _normalize_profile(host.get('profile'))
+            # Selecting the "static attacker" type makes it a role=attacker node.
+            if host.get('type') == 'static-attacker':
+                host['profile']['role'] = 'attacker'
             default_user, default_pass = default_credentials(host['profile'])
             host['username'] = normalize_identifier(host.get('username'), default_user)
             host['password'] = str(host.get('password') or default_pass)
@@ -3088,7 +3096,21 @@ def build_federation_images():
                                  str(BUILD_SOURCES / 'attacker-static' / 'Dockerfile')))
         log.append('federation_network-attacker: built')
     else:
-        log.append('federation_network-attacker: no build source (attacker-static/Dockerfile missing)')
+        # The static attacker image is defined in THIS plugin repo (very basic
+        # ubuntu + nmap) — not in the mounted legacy build source.
+        attacker_df = Path(__file__).resolve().parent / 'attacker' / 'Dockerfile'
+        if attacker_df.exists():
+            result = subprocess.run(
+                ['docker', 'build', '-f', str(attacker_df), '-t',
+                 'federation_network-attacker:latest', str(attacker_df.parent)],
+                capture_output=True, text=True, timeout=600,
+            )
+            if result.returncode == 0:
+                log.append('federation_network-attacker: built (from plugin attacker/)')
+            else:
+                log.append(f'federation_network-attacker: build failed: {result.stderr.strip()[:200]}')
+        else:
+            log.append('federation_network-attacker: no Dockerfile (topology plugin attacker/ missing)')
     if not any('built' in line for line in log):
         raise RuntimeError(f'No build sources found under {BUILD_SOURCES}')
     return {'built': federation_images_status(), 'log': log}
