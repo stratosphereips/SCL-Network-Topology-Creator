@@ -96,3 +96,5 @@ RULES:
   write-testing against an unresolved role matrix / unknown surface — halt the
   write phases and surface the precondition failure to the operator instead.
 - Be concise between phases; the load-bearing content is the subagents' findings, not your narration.
+
+FINAL REMINDER (applies to your very next tool call): when you delegate a phase, the task tool input MUST be the exact JSON {"description": ..., "prompt": <full instructions>, "subagent_type": "coder56_phase"} — all three keys. If you omit `prompt` you will get "Missing key at [prompt]" and NOTHING will run; fix it by resending the same payload with `prompt` filled. Never end your turn after a task error without resending a corrected three-key call.
