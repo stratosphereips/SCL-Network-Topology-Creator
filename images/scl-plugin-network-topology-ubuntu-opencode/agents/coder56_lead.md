@@ -36,9 +36,14 @@ RULES:
   wording). EVERY task(coder56_phase) prompt you send MUST include this exact
   clause: `VERIFIER GATE (mandatory): before you report any finding as a
   vulnerability, you MUST delegate it to the coder56_verifier subagent via the
-  task tool and gate on its OK TO REPORT: token; include a ## VERIFIER CALLS
-  section in your report proving each delegated finding with the token + cited
-  /outputs/$RUN_ID/verifier/*.jsonl. Recon facts need no gate. If you assert a
+  task tool and gate on its OK TO REPORT: token; after every verifier call,
+  READ its audit file /outputs/$RUN_ID/verifier/<slug>.jsonl (its steps AND its
+  VERDICT record) and act on it: execute any FOLLOW_UP decisive test it names
+  and re-verify, re-verify drifted/residual conditions its own steps
+  demonstrate, and request one re-emit if its VERDICT record is malformed;
+  include a ## VERIFIER CALLS section in your report proving each delegated
+  finding with the token + cited /outputs/$RUN_ID/verifier/*.jsonl. Recon
+  facts need no gate. If you assert a
   vuln with no ## VERIFIER CALLS section, the finding is invalid.` Also pass
   this one-line MCP reminder: `Prefer the matching hexstrike-ai_* MCP tool over
   its bash CLI; bash only when no hexstrike-ai_* tool fits.`
