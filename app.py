@@ -2635,10 +2635,35 @@ def shell_quote(value):
 
 
 def ssh_setup_block(username, password):
+    # Root logins need sshd tweaks: stock Ubuntu sshd has
+    # "PermitRootLogin prohibit-password", which blocks password auth for root.
+    # When a topology explicitly declares root SSH creds (e.g. the Aracne
+    # pivot), enable root password login. Non-root users stay untouched.
+    root_fix = ''
+    if username == 'root':
+        root_fix = """sed -i -E 's/^#?PermitRootLogin .*/PermitRootLogin yes/' /etc/ssh/sshd_config || true
+grep -qE '^PermitRootLogin' /etc/ssh/sshd_config || echo 'PermitRootLogin yes' >> /etc/ssh/sshd_config
+sed -i -E 's/^#?PasswordAuthentication .*/PasswordAuthentication yes/' /etc/ssh/sshd_config || true
+"""
     return f"""mkdir -p /var/run/sshd
 useradd -m -s /bin/bash {shell_quote(username)} 2>/dev/null || true
 echo {shell_quote(username + ':' + password)} | chpasswd || true
-/usr/sbin/sshd || true
+{root_fix}/usr/sbin/sshd || true
+"""
+
+
+def pivot_firewall_block():
+    # Aracne lab-hygiene firewall for the attack pivot (the host the LLM agent
+    # lives on): allow traffic to/from the local docker networks, allow the
+    # internet, but explicitly drop anything to/from 147.32.0.0/16 (CTU).
+    # Base image has NET_ADMIN + nftables; plain accepts, policy stays accept.
+    return """nft add table inet aracne_fw 2>/dev/null || true
+nft add chain inet aracne_fw input '{ type filter hook input priority 0; policy accept; }' 2>/dev/null || true
+nft add chain inet aracne_fw output '{ type filter hook output priority 0; policy accept; }' 2>/dev/null || true
+nft add rule inet aracne_fw input ip saddr '{ 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16 }' accept 2>/dev/null || true
+nft add rule inet aracne_fw output ip daddr '{ 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16 }' accept 2>/dev/null || true
+nft add rule inet aracne_fw input ip saddr 147.32.0.0/16 drop 2>/dev/null || true
+nft add rule inet aracne_fw output ip daddr 147.32.0.0/16 drop 2>/dev/null || true
 """
 
 
@@ -2650,6 +2675,10 @@ def host_script(topology, network, host, host_index, gateway):
     ssh_block = ''
     if host.get('ssh_enabled'):
         ssh_block = ssh_setup_block(host['username'], host['password'])
+    fw_block = ''
+    if (host.get('profile') or {}).get('attacker_pivot'):
+        # The pivot is where the LLM agent lives; fence off CTU there.
+        fw_block = pivot_firewall_block()
     return f"""set -eu
 ip route replace default via {gateway} || true
 mkdir -p /srv/scl-data /srv/www /srv/files /srv/db /var/log/scl
@@ -2663,6 +2692,7 @@ cp /srv/scl-data/README.txt /srv/www/index.txt || true
 cp /srv/scl-data/README.txt /srv/files/share.txt || true
 {service_block}
 {ssh_block}
+{fw_block}
 tail -f /dev/null
 """
 
@@ -2811,6 +2841,14 @@ def host_entrypoint_cmd(host_type):
     return 'tail -f /dev/null'
 
 
+def compose_dollar_escape(text):
+    # docker compose interpolates $VAR / ${VAR} when parsing a compose file;
+    # '$$' is the literal-dollar escape. Shell blocks may embed passwords or
+    # data containing '$' (e.g. the pivot root password 'rP8!vX3#nM6@qT1$zC9k')
+    # which would otherwise be mangled to nothing at parse time.
+    return text.replace('$', '$$')
+
+
 def generate_compose(topology, log_name=None):
     # Segment under EXPERIMENTS_ROOT where this run's SLIPS logs live.
     log_rel = slugify(log_name) if log_name else slugify(topology.get('name') or topology.get('id') or 'lab')
@@ -2905,7 +2943,7 @@ def generate_compose(topology, log_name=None):
             'hostname': router.get('name') or router_id,
             'cap_add': ['NET_ADMIN'],
             'sysctls': {'net.ipv4.ip_forward': '1'},
-            'command': ['sh', '-lc', router_script_text],
+            'command': ['sh', '-lc', compose_dollar_escape(router_script_text)],
             'networks': router_networks,
             'labels': [
                 'scl.plugin=network-topology',
@@ -2964,14 +3002,14 @@ def generate_compose(topology, log_name=None):
                     f"cat > {NODE_CONFIG_PATH} <<'EOF'\n{content}EOF\n"
                 )
                 svc['stop_grace_period'] = '30s'
-                svc['entrypoint'] = ['sh', '-lc', f"{write_block}exec {node_entrypoint(profile)}"]
+                svc['entrypoint'] = ['sh', '-lc', compose_dollar_escape(f"{write_block}exec {node_entrypoint(profile)}")]
             else:
-                svc['command'] = ['sh', '-lc', host_script(topology, network, host, host_index, gateway_ip)]
+                svc['command'] = ['sh', '-lc', compose_dollar_escape(host_script(topology, network, host, host_index, gateway_ip))]
                 cron_lines = _connection_cron_lines(topology, profile)
                 cronjobs = [line for line in cron_lines if line.strip()]
                 if cronjobs:
                     cron_prefix = 'echo "' + '\\n'.join(cronjobs) + '" | crontab - 2>/dev/null; service cron start 2>/dev/null; '
-                    svc['command'] = ['sh', '-lc', cron_prefix + host_script(topology, network, host, host_index, gateway_ip)]
+                    svc['command'] = ['sh', '-lc', compose_dollar_escape(cron_prefix + host_script(topology, network, host, host_index, gateway_ip))]
             compose['services'][service_name] = svc
     return compose
 

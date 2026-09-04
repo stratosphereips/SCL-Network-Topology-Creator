@@ -18,6 +18,16 @@ LOG=/var/log/static_attacker/nmap_${NOW}.log
 
 echo "[static-attacker] interface=$INTERFACE subnet=$SUBNET log=$LOG"
 
+# Experiment phase gating: stay quiet during the baseline period so the first
+# FL training windows are truly benign. The experiment runner creates
+# /tmp/start_static_attacker when the attack phase begins (same moment it
+# launches Aracne). Standalone use: docker exec <c> touch /tmp/start_static_attacker
+echo "[static-attacker] waiting for /tmp/start_static_attacker (attack phase start)..."
+while [ ! -f /tmp/start_static_attacker ]; do
+  sleep 2
+done
+echo "[static-attacker] attack phase started — engaging"
+
 while true; do
   echo "===== $(date -u +%F\ %T) scanning $SUBNET =====" >> "$LOG"
   nmap -sS -A -sV \
