@@ -69,6 +69,8 @@ The first version intentionally starts with Ubuntu-only hosts. Service roles pre
 If SSH is enabled for a host, the generated container creates the specified SSH user and starts `sshd`.
 If you select a hackerlab network, the plugin adds the `scl-hackerlab` container to that network with a deterministic `.2` address.
 
+The first topology start builds a shared Ubuntu runtime image. The build uses host networking first so package installation also works on Docker hosts whose bridge network has no outbound route, then retries with Docker's default build network for compatibility. Later topology starts reuse the local image.
+
 ## Installation
 
 Clone this repository into the `plugins` directory of an existing StratoCyberLab checkout:

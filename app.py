@@ -3165,15 +3165,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   && mkdir -p /run/sshd \
   && rm -rf /var/lib/apt/lists/*
 """
-    build = subprocess.run(
-        ['docker', 'build', '-t', BASE_IMAGE, '-'],
-        input=dockerfile,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if build.returncode != 0:
-        raise RuntimeError(build.stderr or build.stdout or 'Docker image build failed')
+    errors = []
+    for network_args in (['--network', 'host'], []):
+        build = subprocess.run(
+            ['docker', 'build', *network_args, '-t', BASE_IMAGE, '-'],
+            input=dockerfile,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if build.returncode == 0:
+            return
+        network_name = network_args[-1] if network_args else 'default'
+        output = '\n'.join(
+            part.strip() for part in (build.stdout, build.stderr) if part.strip()
+        )
+        errors.append(f'Docker image build failed with {network_name} networking:\n{output}')
+    raise RuntimeError('\n\n'.join(errors))
 
 
 def compose_project_name(topology_id):
