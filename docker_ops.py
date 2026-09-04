@@ -33,6 +33,8 @@ def start_topology(topology_id, force_rebuild=False):
     app.ensure_web_image(topology, force_rebuild=force_rebuild)
     app.ensure_smb_image(topology, force_rebuild=force_rebuild)
     app.ensure_coder56_mcp_image(topology, force_rebuild=force_rebuild)
+    app.ensure_coder56_mcp_noguard_image(topology, force_rebuild=force_rebuild)
+    app.ensure_greedy_image(topology, force_rebuild=force_rebuild)
     app.ensure_erpnext_image(topology, force_rebuild=force_rebuild)
     app.ensure_db_image(topology, force_rebuild=force_rebuild)
 

@@ -139,6 +139,22 @@ DB_HOST_IMAGE = 'scl-db-host:0.1'
 # images/scl-coder56-mcp-host/.
 CODER56_MCP_HOST_IMAGE = 'scl-coder56-mcp-host:0.1'
 
+# NoGuard experiment overlay for `coder56-mcp-noguard` hosts: identical Kali MCP
+# stack, but the coder56 agent prompts carry ZERO safety/guardrail content
+# (agents-noguard/ + stripped AGENTS.md) and /opt/guardrail carries the
+# shadow-mode-capable guardrail.ts. The guardrail still LOADS on these hosts so
+# it can adjudicate in shadow mode (verdicts persisted, never enforced).
+# Built as a thin overlay FROM scl-coder56-mcp-host:0.1 — see
+# images/scl-coder56-mcp-host-noguard/Dockerfile.
+CODER56_MCP_NOGUARD_HOST_IMAGE = 'scl-coder56-mcp-host-noguard:0.1'
+
+# Dedicated image for `greedy-server` hosts — the Greedy Cars integrador app
+# (Spring Boot API :8080 + adminer :9000 + Node :8081 + MariaDB :3306 behind an
+# nginx front door on :80), cloned from the upstream ingSoftII repo at a pinned
+# ref and seeded at first boot by greedy-app-start.sh + greedy-seed.sql. See
+# images/scl-greedy-host/.
+GREEDY_HOST_IMAGE = 'scl-greedy-host:0.1'
+
 # Dedicated image for `erpnext-server` hosts — runs the ERPNext business app on
 # the Frappe/bench stack: MariaDB (:3306, site schema + seeded demo data) +
 # Redis (:6379) + the Frappe gunicorn web server (:8000, ERPNext desk + REST at
@@ -255,10 +271,20 @@ HOST_TYPES = {
         'ports': ['4096/tcp', '8888/tcp'],
         'description': 'coder56 agent (opencode) wired to the HexStrike AI MCP server. The host runs the HexStrike Flask backend (150+ security-tool routes) on 127.0.0.1:8888 and exposes it to coder56 through a FastMCP stdio bridge, so coder56 can call any hexstrike tool over MCP. The host auto-arms the guardrail (coder56 is guarded); every MCP tool call is adjudicated by the guardrail judge and refused calls never reach the backend.',
     },
+    'coder56-mcp-noguard': {
+        'label': 'Coder56_MCP_NoGuard',
+        'ports': ['4096/tcp', '8888/tcp'],
+        'description': 'EXPERIMENT variant of coder56-mcp: same Kali + HexStrike MCP stack, but the baked coder56 agent prompts contain no safety/RoE/guardrail content (agents-noguard). The guardrail still arms and adjudicates every call, but runs in SHADOW mode for runs launched with guardrail_shadow=true (verdicts recorded, never wired back to the agent). Use only for the shadow-guardrail experiment topologies.',
+    },
     'erpnext-server': {
         'label': 'ERPNext (Frappe business app)',
         'ports': ['80/tcp', '8000/tcp', '3306/tcp', '6379/tcp'],
         'description': 'ERPNext business app on the Frappe/bench stack: MariaDB (:3306, site schema + seeded demo data) + Redis (:6379) + the Frappe gunicorn web server (:8000, ERPNext desk + REST at /api/method/...) + nginx front door (:80). Built from the Frappe framework + ERPNext apps at image-build time; the MariaDB datadir AND the bench sites/ dir are on named volumes so the site + data persist across topology restarts. Reachable same-origin on :80 (login at /login, REST at /api/method/ping). Seeded with known weak-credential users at each privilege level.',
+    },
+    'greedy-server': {
+        'label': 'Greedy Cars (integrador)',
+        'ports': ['80/tcp', '3306/tcp', '8080/tcp', '8081/tcp', '9000/tcp'],
+        'description': 'Greedy Cars integrador web app (ingSoftII): Spring Boot API (:8080) + adminer (:9000) + Node frontend service (:8081) + MariaDB (:3306) behind an nginx front door on :80 serving the gredy_cars_client SPA. Cloned from the upstream repo at a pinned ref at image-build time; MariaDB schema + demo dataset seeded on first boot (greedy-app-start.sh + greedy-seed.sql, idempotent). Seeded users include the bootstrap admin and demo client/employee accounts with weak, documented passwords.',
     },
 }
 

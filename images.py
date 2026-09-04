@@ -538,6 +538,52 @@ def ensure_coder56_mcp_image(topology, force_rebuild=False):
     print(f"✅ Built Coder56-MCP-host image: {app.CODER56_MCP_HOST_IMAGE}")
 
 
+def ensure_coder56_mcp_noguard_image(topology, force_rebuild=False):
+    """Build the NoGuard overlay image if any host is a `coder56-mcp-noguard`.
+
+    Thin overlay FROM scl-coder56-mcp-host:0.1 that swaps in (a) the zero-safety
+    agent prompts (agents-noguard/, stripped AGENTS.md) and (b) the shadow-mode-
+    capable guardrail.ts + judge config. The BUILD CONTEXT is the opencode image
+    dir (not the overlay dir) so guardrail/ is always the live working-tree
+    source — single source of truth, no vendored copy to drift. The base MCP
+    image must already exist (ensure_coder56_mcp_image runs first). To pick up
+    edits to agents-noguard/ or guardrail/: docker rmi this tag (or force_build)
+    — the skip-if-exists check mirrors every other ensure_*.
+    """
+    has_noguard_host = any(
+        host.get('type') == 'coder56-mcp-noguard'
+        for network in topology.get('networks', [])
+        for host in network.get('hosts', [])
+    )
+    if not has_noguard_host:
+        return
+
+    if not force_rebuild:
+        result = subprocess.run(
+            ['docker', 'image', 'inspect', app.CODER56_MCP_NOGUARD_HOST_IMAGE],
+            capture_output=True, text=True,
+        )
+        if result.returncode == 0:
+            print(f"✅ Coder56-MCP-noguard-host image exists: {app.CODER56_MCP_NOGUARD_HOST_IMAGE}")
+            return
+
+    images_dir = Path(os.environ.get('IMAGES_DIR', '/app/images'))
+    dockerfile = images_dir / 'scl-coder56-mcp-host-noguard' / 'Dockerfile'
+    context = images_dir / 'scl-plugin-network-topology-ubuntu-opencode'
+    if not dockerfile.exists():
+        raise RuntimeError(f'Coder56-MCP-noguard-host Dockerfile not found: {dockerfile}')
+    if not context.exists():
+        raise RuntimeError(f'Coder56-MCP-noguard-host build context not found: {context}')
+    print(f"🔨 Building Coder56-MCP-noguard-host image: {app.CODER56_MCP_NOGUARD_HOST_IMAGE} from {context}")
+    build = subprocess.run(
+        ['docker', 'build', '-f', str(dockerfile), '-t', app.CODER56_MCP_NOGUARD_HOST_IMAGE, str(context)],
+        capture_output=True, text=True, check=False,
+    )
+    if build.returncode != 0:
+        raise RuntimeError(build.stderr or build.stdout or f'Failed to build {app.CODER56_MCP_NOGUARD_HOST_IMAGE}')
+    print(f"✅ Built Coder56-MCP-noguard-host image: {app.CODER56_MCP_NOGUARD_HOST_IMAGE}")
+
+
 def ensure_erpnext_image(topology, force_rebuild=False):
     """Build the ERPNext-host image if any host is an `erpnext-server`.
 
@@ -640,3 +686,38 @@ def ensure_db_image(topology, force_rebuild=False):
     if build.returncode != 0:
         raise RuntimeError(build.stderr or build.stdout or f'Failed to build {app.DB_HOST_IMAGE}')
     print(f"✅ Built Db-host image: {app.DB_HOST_IMAGE}")
+
+
+def ensure_greedy_image(topology, force_rebuild=False):
+    """Build the greedy-host image if any host is a `greedy-server`.
+
+    The image carries the full Greedy Cars integrador stack (Spring Boot API +
+    Node service + adminer + MariaDB + nginx front door) cloned from the
+    upstream ingSoftII repo at a pinned ref at build time; first boot seeds the
+    schema + demo dataset. See images/scl-greedy-host/.
+    """
+    has_greedy_host = any(
+        host.get('type') == 'greedy-server'
+        for network in topology.get('networks', [])
+        for host in network.get('hosts', [])
+    )
+    if not has_greedy_host:
+        return
+
+    if not force_rebuild:
+        result = subprocess.run(['docker', 'image', 'inspect', app.GREEDY_HOST_IMAGE], capture_output=True, text=True)
+        if result.returncode == 0:
+            print(f"✅ Greedy-host image exists: {app.GREEDY_HOST_IMAGE}")
+            return
+
+    context = Path(os.environ.get('IMAGES_DIR', '/app/images')) / 'scl-greedy-host'
+    if not context.exists():
+        raise RuntimeError(f'Greedy-host image build context not found: {context}')
+    print(f"🔨 Building Greedy-host image: {app.GREEDY_HOST_IMAGE} from {context}")
+    build = subprocess.run(
+        ['docker', 'build', '-t', app.GREEDY_HOST_IMAGE, str(context)],
+        capture_output=True, text=True, check=False,
+    )
+    if build.returncode != 0:
+        raise RuntimeError(build.stderr or build.stdout or f'Failed to build {app.GREEDY_HOST_IMAGE}')
+    print(f"✅ Built Greedy-host image: {app.GREEDY_HOST_IMAGE}")

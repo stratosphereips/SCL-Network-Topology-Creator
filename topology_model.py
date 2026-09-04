@@ -96,7 +96,7 @@ def validate_topology(topology):
             # host_has_agents, the guardrail env, HEXSTRIKE_ENABLED, and the mcp
             # block all key off the agents list, so without coder56 the host would
             # be a silently half-wired MCP image (no opencode serve, no guard).
-            if host['type'] == 'coder56-mcp' and 'coder56' not in host['agents']:
+            if host['type'] in ('coder56-mcp', 'coder56-mcp-noguard') and 'coder56' not in host['agents']:
                 host['agents'] = ['coder56'] + [a for a in host['agents'] if a != 'coder56']
         legacy_router_id = network.get('router_id')
         router_ids = network.get('router_ids')

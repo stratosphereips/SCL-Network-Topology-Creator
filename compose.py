@@ -224,6 +224,10 @@ def generate_compose(topology, opencode_images=None):
                 host_image = app.SMB_HOST_IMAGE
             elif host.get('type') == 'coder56-mcp':
                 host_image = app.CODER56_MCP_HOST_IMAGE
+            elif host.get('type') == 'coder56-mcp-noguard':
+                host_image = app.CODER56_MCP_NOGUARD_HOST_IMAGE
+            elif host.get('type') == 'greedy-server':
+                host_image = app.GREEDY_HOST_IMAGE
             elif host.get('type') == 'erpnext-server':
                 host_image = app.ERPNEXT_HOST_IMAGE
             elif host.get('type') == 'db-server':
@@ -349,12 +353,18 @@ def generate_compose(topology, opencode_images=None):
 
                 # Add SSH and compromised credentials environment variables
                 # Get the actual API key value from the environment at generation time
-                # This allows the docker-compose file to work when started directly
-                api_key_value = os.environ.get('OPENCODE_API_KEY', '')
+                # This allows the docker-compose file to work when started directly.
+                # Per-host LLM override: optional host fields llm_url / llm_model /
+                # llm_api_key let ONE topology run on a different provider (e.g. a
+                # local Ollama box) while every other host keeps the plugin-global
+                # provider — the env also feeds the in-container guardrail judge,
+                # so the judge follows the agent to the same provider.
+                api_key_value = str(
+                    host.get('llm_api_key') or os.environ.get('OPENCODE_API_KEY', ''))
                 service_config['environment'] = {
                     'OPENCODE_API_KEY': api_key_value,
-                    'LLM_URL': app.LLM_URL_FULL,
-                    'LLM_MODEL': app.LLM_MODEL,
+                    'LLM_URL': str(host.get('llm_url') or app.LLM_URL_FULL),
+                    'LLM_MODEL': str(host.get('llm_model') or app.LLM_MODEL),
                     'SSH_COMPROMISED_USER': 'labuser',
                     'SSH_COMPROMISED_PASS': host.get('password', 'strato'),
                     # Write run logs into the mounted /outputs so get_trident_base()
@@ -408,7 +418,7 @@ def generate_compose(topology, opencode_images=None):
                 # FastMCP bridge (spawned lazily by opencode on the first MCP tool
                 # call) can reach it. The MCP "mcp" block itself is injected into
                 # opencode.json by scripts.py opencode_agent_block.
-                if host.get('type') == 'coder56-mcp':
+                if host.get('type') in ('coder56-mcp', 'coder56-mcp-noguard'):
                     service_config['environment']['HEXSTRIKE_ENABLED'] = '1'
                     # The backend provisions on first boot (~2-5s for the Flask
                     # import stack) before it serves :8888. Without a healthcheck a
