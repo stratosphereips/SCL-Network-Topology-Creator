@@ -1,9 +1,48 @@
 # Basic backend unit tests for the topology creator.
 # Purpose: catch regressions in the core logic (profile→image/config baking,
 # validate_topology normalization, and generate_compose output).
+from types import SimpleNamespace
+
 import pytest
 
 import app
+
+
+def test_ensure_base_image_uses_host_network_first(monkeypatch):
+    calls = []
+    responses = iter([
+        SimpleNamespace(returncode=1, stdout='', stderr='missing'),
+        SimpleNamespace(returncode=0, stdout='built', stderr=''),
+    ])
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        return next(responses)
+
+    monkeypatch.setattr(app.subprocess, 'run', fake_run)
+    app.ensure_base_image()
+
+    assert calls[1][0] == [
+        'docker', 'build', '--network', 'host', '-t', app.BASE_IMAGE, '-'
+    ]
+
+
+def test_ensure_base_image_retries_default_network(monkeypatch):
+    calls = []
+    responses = iter([
+        SimpleNamespace(returncode=1, stdout='', stderr='missing'),
+        SimpleNamespace(returncode=1, stdout='host failed', stderr='host warning'),
+        SimpleNamespace(returncode=0, stdout='built', stderr=''),
+    ])
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        return next(responses)
+
+    monkeypatch.setattr(app.subprocess, 'run', fake_run)
+    app.ensure_base_image()
+
+    assert calls[2][0] == ['docker', 'build', '-t', app.BASE_IMAGE, '-']
 
 
 def _basic_topology():
