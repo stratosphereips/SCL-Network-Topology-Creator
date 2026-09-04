@@ -19,3 +19,11 @@ Provenance recorded 2026-09-04:
   `scl-coder56-mcp-host-noguard:0.1` overlay image). The two directories must stay identical.
 
 The noguard strip manifest is in `noguard/README.md`.
+
+## Overlay build record (2026-09-04)
+- `scl-coder56-mcp-host-noguard:0.1` = sha256:6b567c4ab0d1..., built FROM
+  `scl-coder56-mcp-host:0.1` (sha256:3f73027036ca...)
+- baked guardrail.ts md5 47d9c69d0bc73b499ce4e4b7efa08656 (== working tree, shadow mode)
+- baked opencode-guardrail.json md5 bf2454e59cb08e9da59370762d410c14 (== working tree)
+- image content verified: agents + AGENTS.md contain zero safety/guardrail strings;
+  judge `guardrail_coder56` prompt (6832 chars, ClawKeeper scope-keeper) intact
