@@ -9,18 +9,22 @@ services:
     environment:
       - DASHBOARD_LLM_URL=http://dashboard/api/llm/chat
       # Build sources for the "Build images" button (the SLIPS/runner project).
+      # This is the IN-CONTAINER location of the build sources; the host-side
+      # source dir is set via the adjacent .env and only controls the volume
+      # mount below.
       - FEDERATION_BUILD_SOURCES=/srv/federation-build
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - network-topology-data:/app/data
       - ${FEDERATION_BUILD_SOURCES:-/srv/federation-build}:/srv/federation-build:ro
     ports:
-      # UI bound to localhost only — never exposed to the network/internet.
+      # UI/API bound to localhost only — never exposed to the network/internet.
       # Access directly at http://127.0.0.1:9002 or via SSH tunnel from a
       # remote machine: ssh -L 9002:127.0.0.1:9002 <this-host>
       - "127.0.0.1:9002:9002"
     networks:
-      - playground-net
+      playground-net:
+        ipv4_address: 172.20.0.13
 
 volumes:
   network-topology-data:
