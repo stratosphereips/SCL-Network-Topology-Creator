@@ -18,10 +18,15 @@
 
 #include <odb/database.hxx>
 #include <odb/transaction.hxx>
-#include <odb/pgsql/database.hxx>
 
 #include "core/auth/User.hpp"
+// Common ODB traits first, then the pgsql-specific specializations — a TU that
+// calls query/persist on the CONCRETE odb::pgsql::database needs both (upstream
+// TUs only use the polymorphic odb::database, which never instantiates the
+// per-database traits; see src/tools/LogEntry.cpp for the same include pair).
 #include "core/auth/User_odb.h"
+#include "core/auth/User_odb_pgsql.h"
+#include <odb/pgsql/database.hxx>
 
 int main(int argc, char **argv)
 {

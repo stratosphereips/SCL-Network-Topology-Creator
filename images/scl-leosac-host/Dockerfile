@@ -41,7 +41,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         netcat-openbsd python3 python3-websockets \
         libssl-dev libzmq3-dev libcurl4-openssl-dev libtclap-dev libscrypt-dev \
         libboost-all-dev libsqlite3-dev libpq-dev \
-        odb libodb-dev libodb-pgsql-dev libodb-sqlite-dev libodb-boost-dev \
+        odb g++-12 libodb-dev libodb-pgsql-dev libodb-sqlite-dev libodb-boost-dev \
         libgpiod-dev \
         postgresql-16 postgresql-client-16 nginx \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
@@ -72,7 +72,7 @@ RUN git init /opt/leosac-src \
 # first admin is persisted straight through the same ODB layer leosac uses.
 COPY leosac-create-admin.cpp /tmp/leosac-create-admin.cpp
 RUN g++ -std=c++14 -O2 /tmp/leosac-create-admin.cpp -o /usr/local/bin/leosac-create-admin \
-        -I/opt/leosac-src \
+        -I/opt/leosac-src/src \
         -I/opt/leosac-build/odb_gen \
         -I/opt/leosac-src/deps/flagset \
         -I/opt/leosac-src/deps/date/include \
@@ -84,7 +84,9 @@ RUN g++ -std=c++14 -O2 /tmp/leosac-create-admin.cpp -o /usr/local/bin/leosac-cre
     && ! ldd /usr/local/bin/leosac-create-admin | grep -q 'not found'
 
 # ── PostgreSQL: initialized cluster, listening on all interfaces. ──────────────
-RUN pg_createcluster 16 main \
+# (postgresql-16's postinst usually auto-creates the cluster in containers, so
+# guard the creation; the sed + hba line are always applied.)
+RUN [ -d /etc/postgresql/16/main ] || pg_createcluster 16 main \
     && sed -i "s/^#\?listen_addresses.*/listen_addresses = '*'/" \
         /etc/postgresql/16/main/postgresql.conf \
     && printf 'host all all 0.0.0.0/0 scram-sha-256\n' >> \
