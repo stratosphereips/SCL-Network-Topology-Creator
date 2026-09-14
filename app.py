@@ -166,9 +166,9 @@ SLIPS_PROFILES = {
 }
 
 # Service registry (built-ins; the mounted build source's services.json is
-# merged over these at startup). Services are freely combinable on a node —
-# snmp+web both serve /www on 8000, but that clash is benign (same files, and
-# the second http.server simply fails to bind while snmpd/vsftpd keep running).
+# merged over these at startup). Services are freely combinable on a node and
+# never bundled: snmp serves only SNMP; a webpage on :8000 is always the
+# explicit `web` tick box (or run_web on a slips sensor).
 SERVICES = {
     'ftp': {
         'label': 'FTP server',
@@ -337,14 +337,25 @@ def _connection_cron_lines(topology, profile):
     """Expand a host's connection instances into concrete crontab lines.
 
     External connections have fixed commands. Internal connections resolve
-    {target} to the *specific* device (hostname) chosen for that connection;
-    if no device was chosen, fall back to any host that provides the required
-    service role. Each instance may carry its own interval override.
+    {target} to the device (hostname) chosen for that connection; if no
+    device was chosen, fall back to any host that provides the required
+    service role. A target that names an authored host with repeats>1 fans
+    out to every expanded instance of that group (one cron line per
+    instance), so pointing at a duplicated host means "the whole group" and
+    every clone of the source keeps an identical crontab.
+    Each instance may carry its own interval override.
     """
     lines = []
     role_to_host = {}
     targets = set()
+    repeat_groups = {}
     for net in topology.get('networks', []):
+        for host in net.get('hosts', []):
+            times = int(host.get('repeats') or 1)
+            if times > 1:
+                base = host.get('name') or host.get('id')
+                if base:
+                    repeat_groups[base] = [base] + [f'{base}-{i}' for i in range(2, times + 1)]
         for host in expand_repeats(net.get('hosts', [])):
             targets.add(host['name'])
             hprofile = host.get('profile') or {}
@@ -359,9 +370,14 @@ def _connection_cron_lines(topology, profile):
         target_role = ct.get('target_role')
         if target_role:
             target = entry.get('target') or ''
-            if target not in targets:
-                target = role_to_host.get(target_role, 'localhost')
-            command = command.replace('{target}', target)
+            names = repeat_groups.get(target)
+            if not names:
+                if target not in targets:
+                    target = role_to_host.get(target_role, 'localhost')
+                names = [target]
+            for name in names:
+                lines.append(f"{interval} {command.replace('{target}', name)}")
+            continue
         lines.append(f"{interval} {command}")
     return lines
 
@@ -372,7 +388,31 @@ def _connection_cron_lines(topology, profile):
 NODE_CONFIG_PATH = '/opt/network-setup/node.conf'
 
 
-def node_config(topology, host, profile, peer_names):
+def keepalive_targets(topology):
+    """URLs every slips sensor curls every 30s (Zeek keepalive loop).
+
+    Mirrors the original fixed experiment's loop (FTP host on :21, web
+    hosts on :8000) but resolved from the live topology: hosts providing
+    the ftp service, hosts serving HTTP on 8000 (the explicit `web`
+    service, or a sensor with run_web). snmp serves only SNMP — web is
+    never bundled into another service.
+    """
+    targets = []
+    for net in topology.get('networks', []):
+        for host in expand_repeats(net.get('hosts', [])):
+            hprofile = host.get('profile') or {}
+            services = hprofile.get('services') or []
+            if 'ftp' in services:
+                targets.append(f'http://{host["name"]}:21')
+            serves_web = 'web' in services
+            if not serves_web and hprofile.get('slips_variant', 'none') != 'none' and host.get('run_web'):
+                serves_web = True
+            if serves_web:
+                targets.append(f'http://{host["name"]}:8000')
+    return targets
+
+
+def node_config(topology, host, profile, peer_names, gateway_ip=''):
     """Return the node.conf content (bash-sourcable) encoding a node's setup."""
     profile = profile or {}
     out = []
@@ -384,6 +424,11 @@ def node_config(topology, host, profile, peer_names):
             out.append(f"SLIPS_PEERS='{','.join(peer_names)}'")
         if host.get('run_web'):
             out.append('RUN_WEB=1')
+        targets = keepalive_targets(topology)
+        if targets:
+            out.append(f"KEEPALIVE_TARGETS='{' '.join(targets)}'")
+        if gateway_ip:
+            out.append(f'GATEWAY_IP={gateway_ip}')
     if profile.get('services'):
         out.append(f"SERVICES='{','.join(profile['services'])}'")
     cron = [line for line in _connection_cron_lines(topology, profile) if line.strip()]
@@ -1581,9 +1626,9 @@ INDEX_HTML = r"""<!doctype html>
                   <span>Enable SSH on this host</span>
                 </label>
               </div>
-              ${profile.slips_variant !== 'none' ? `<div class="span-12"><label class="checkbox-line">
+              ${profile.slips_variant !== 'none' ? `<div class="span-12"><label class="checkbox-line fed">
                 <input data-field="host.run_web" type="checkbox" ${host.run_web ? 'checked' : ''}>
-                <span>Run web traffic generator (cron job)</span>
+                <span>Serve web page on :8000 (apache, /var/www/slips_site)</span>
               </label></div>` : ''}
               <div class="span-12 profile-box fed-box">
                 <h5>Machine profile (federation)</h5>
@@ -3044,7 +3089,7 @@ def generate_compose(topology, log_name=None):
             if managed:
                 # Node setup is baked into node.conf (the single source of truth)
                 # at boot via the entrypoint — no env vars, no host bind-mounts.
-                content = node_config(topology, host, profile, peer_names_of(topology))
+                content = node_config(topology, host, profile, peer_names_of(topology), gateway_ip)
                 write_block = (
                     f"mkdir -p /opt/network-setup && "
                     f"cat > {NODE_CONFIG_PATH} <<'EOF'\n{content}EOF\n"

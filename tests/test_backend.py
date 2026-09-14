@@ -344,7 +344,7 @@ def test_internal_target_resolves_to_explicit_device():
                  "profile": {"slips_variant": "none", "services": ["ftp"], "connections": [], "internal": []}},
                 {"id": "s1", "name": "scanner", "type": "normal-user", "repeats": 2,
                  "profile": {"slips_variant": "none", "services": [], "connections": [],
-                             "internal": [{"id": "ftp_check", "target": "client"}]}},
+                              "internal": [{"id": "ftp_check", "target": "client"}]}},
             ],
         }],
         "routers": [{"id": "r1", "name": "core"}],
@@ -354,6 +354,35 @@ def test_internal_target_resolves_to_explicit_device():
     host = valid["networks"][0]["hosts"][1]
     cron = app._connection_cron_lines(valid, host["profile"])
     assert any("check-ftp.sh client" in line for line in cron)
+
+
+def test_internal_target_repeats_group_fans_out():
+    # A connection pointing at an authored host with repeats=N must produce
+    # one cron line per expanded instance (the group), so every clone of the
+    # source keeps an identical crontab and every duplicate is contacted.
+    topology = {
+        "name": "t",
+        "networks": [{
+            "id": "n", "cidr": "10.77.1.0/24", "internet": True,
+            "hosts": [
+                {"id": "c1", "name": "ftp-1", "type": "normal-user", "repeats": 3,
+                 "profile": {"slips_variant": "none", "services": ["ftp"], "connections": [], "internal": []}},
+                {"id": "s1", "name": "scanner", "type": "normal-user", "repeats": 2,
+                 "profile": {"slips_variant": "none", "services": [], "connections": [],
+                              "internal": [{"id": "ftp_check", "target": "ftp-1"}]}},
+            ],
+        }],
+        "routers": [{"id": "r1", "name": "core"}],
+    }
+    valid = app.validate_topology(topology)
+    valid["id"] = "t"
+    host = valid["networks"][0]["hosts"][1]
+    cron = app._connection_cron_lines(valid, host["profile"])
+    assert cron == [
+        "* * * * * /scripts/check-ftp.sh ftp-1",
+        "* * * * * /scripts/check-ftp.sh ftp-1-2",
+        "* * * * * /scripts/check-ftp.sh ftp-1-3",
+    ]
 
 
 # --------------------------------------------------------------------------

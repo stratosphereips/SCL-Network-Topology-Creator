@@ -44,9 +44,9 @@ OG_EXPERIMENT = {
              "profile": {"slips_variant": "none", "services": ["ftp"], "connections": [
                  {"id": "google", "interval": "*/6 * * * *"},
                  {"id": "wikipedia", "interval": "*/8 * * * *"}]}},
-            {"id": "u2", "name": "ubuntu-2", "type": "normal-user",
-             "ssh_enabled": True, "username": "admin", "password": "admin",
-             "profile": {"slips_variant": "none", "services": ["snmp"], "connections": []}},
+             {"id": "u2", "name": "ubuntu-2", "type": "normal-user",
+              "ssh_enabled": True, "username": "admin", "password": "admin",
+              "profile": {"slips_variant": "none", "services": ["snmp", "web"], "connections": []}},
         ],
     }],
     "routers": [{"id": "r1", "name": "core"}],
@@ -97,20 +97,20 @@ def test_compose_sensor_caps_and_resources(og_topology, og_compose):
 OG_CRONS = {
     # node -> set of cron lines expected (from the OG slips/ftp entrypoints)
     "fed-s1": {
-        "* * * * * check-ftp.sh ubuntu-1",
-        "*/5 * * * * internet-traffic.sh wikipedia",
+        "* * * * * /scripts/check-ftp.sh ubuntu-1",
+        "*/5 * * * * /scripts/internet-traffic.sh wikipedia",
     },
     "fed-s2": {
-        "*/2 * * * * curl-website.sh ubuntu-2",
-        "*/7 * * * * internet-traffic.sh google",
+        "*/2 * * * * /scripts/curl-website.sh http://ubuntu-2:8000",
+        "*/7 * * * * /scripts/internet-traffic.sh google",
     },
     "fed-s3": {
-        "*/4 * * * * curl-website.sh slips-1",
-        "*/10 * * * * internet-traffic.sh wikipedia",
+        "*/4 * * * * /scripts/curl-website.sh http://slips-1:8000",
+        "*/10 * * * * /scripts/internet-traffic.sh wikipedia",
     },
     "fed-f1": {
-        "*/6 * * * * internet-traffic.sh google",
-        "*/8 * * * * internet-traffic.sh wikipedia",
+        "*/6 * * * * /scripts/internet-traffic.sh google",
+        "*/8 * * * * /scripts/internet-traffic.sh wikipedia",
     },
 }
 
@@ -137,6 +137,22 @@ def test_all_og_crons_baked(og_topology):
 def test_no_wikipedia_paper_registry_entry():
     assert "wikipedia_paper" not in app.CONNECTION_TYPES
     assert "google" in app.CONNECTION_TYPES  # OG uses google traffic
+
+
+def test_og_keepalive_targets_and_gateway(og_topology):
+    # The OG keepalive loop curls the FTP host on :21 and both web hosts on
+    # :8000 (mirroring the original http://IP:21 quirk), on every sensor.
+    targets = app.keepalive_targets(og_topology)
+    assert targets == [
+        "http://slips-1:8000",
+        "http://ubuntu-1:21",
+        "http://ubuntu-2:8000",
+    ]
+    peers = app.peer_names_of(og_topology)
+    cfg = app.node_config(og_topology, og_topology["networks"][0]["hosts"][0],
+                          og_topology["networks"][0]["hosts"][0]["profile"], peers, "172.20.1.254")
+    assert "KEEPALIVE_TARGETS='http://slips-1:8000 http://ubuntu-1:21 http://ubuntu-2:8000'" in cfg
+    assert "GATEWAY_IP=172.20.1.254" in cfg
 
 
 def test_served_webpages_identical_to_og():
