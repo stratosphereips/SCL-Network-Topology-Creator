@@ -38,7 +38,12 @@ services:
       - LLM_MODEL=${LLM_MODEL:-glm-5.3}
       - LLM_PROVIDER=${LLM_PROVIDER:-einfra}
     networks:
-      - scl-playground-net
+      scl-playground-net:
+        aliases:
+          # Canonical control-plane name the agent-manager + console resolve the
+          # plugin by (TOPOLOGY_PLUGIN_URL). A bare recreate of the container
+          # without this alias silently breaks SAM's topology discovery.
+          - scl-plugin-network-topology-control-plane
     restart: unless-stopped
 
 networks:
