@@ -23,7 +23,6 @@ REQUIRED_IDS = [
     "newTopology",
     "topologyName",
     "networkCount",
-    "defaultHosts",
     "networks",
     "routers",
     "savedTopologies",
@@ -86,6 +85,35 @@ def test_new_host_fields_wired():
     # per-topology Open + Delete actions so save/load/remove don't need Docker
     assert 'data-action="load-topology"' in app.INDEX_HTML
     assert 'data-action="delete-topology"' in app.INDEX_HTML
+
+
+def test_federation_orange_additions_wired():
+    # random SSH password generator (orange fed button next to SSH creds)
+    assert 'data-action="randomize-password"' in app.INDEX_HTML
+    assert "randomPassword" in app.INDEX_HTML
+    # refresh connections-to-services against current devices (orange fed button)
+    assert 'data-action="refresh-connections"' in app.INDEX_HTML
+
+
+def test_host_count_controls_wired_and_orange():
+    # per-network host-count field still present; free-text edits must NOT re-render
+    # (render() would reset the box from the model and steal focus mid-typing).
+    assert 'network.hostCount' in app.INDEX_HTML
+    assert 'const isFreeText' in app.INDEX_HTML
+    # both host-count controls are our orange additions
+    assert 'class="fed" data-action="apply-host-count"' in app.INDEX_HTML
+    assert 'class="fed" id="rebuildNetworks"' in app.INDEX_HTML
+    assert "genericHost" in app.INDEX_HTML
+    # host counting lives per-network only; no top-level "Default hosts" control
+    assert 'id="defaultHosts"' not in app.INDEX_HTML
+
+
+def test_ollama_seed_data_ui_removed():
+    # The upstream Ollama-backed "Regenerate data" button and its /api/generate-data
+    # call are dropped from the UI; password randomization uses a local RNG instead.
+    assert 'generate-host-data' not in app.INDEX_HTML
+    assert 'generateHostData' not in app.INDEX_HTML
+    assert 'api/generate-data' not in app.INDEX_HTML
 
 
 def test_scripts_are_valid_javascript():

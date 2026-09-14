@@ -942,11 +942,10 @@ INDEX_HTML = r"""<!doctype html>
             </div>
             <div class="span-3">
               <label for="networkCount">Networks</label>
-              <input id="networkCount" type="number" min="1" max="8" value="3">
+              <input id="networkCount" type="number" min="0" max="8" value="3">
             </div>
             <div class="span-4">
-              <label for="defaultHosts">Default hosts per network</label>
-              <input id="defaultHosts" type="number" min="1" max="12" value="3">
+              <div class="muted" style="padding-top: 28px">Choose how many networks here; set hosts per network on each network card.</div>
             </div>
           </div>
           <p class="muted">Create routed Ubuntu-based SCL labs with segmented networks, multiple routers per network, firewall rules, users, and generated data.</p>
@@ -993,7 +992,7 @@ INDEX_HTML = r"""<!doctype html>
             <div id="routers" class="router-list"></div>
           </div>
           <div class="toolbar">
-            <button class="secondary" id="rebuildNetworks">Apply network count</button>
+            <button class="fed" id="rebuildNetworks" title="Add or remove networks to match the Networks field (hosts stay per network)">Apply network count</button>
             <button class="secondary" id="balancedPreset">Balanced preset</button>
             <button class="secondary" id="enterprisePreset">Enterprise preset</button>
           </div>
@@ -1067,7 +1066,6 @@ INDEX_HTML = r"""<!doctype html>
       const selectedJsonEl = document.getElementById('selectedJson');
       const topologyName = document.getElementById('topologyName');
       const networkCount = document.getElementById('networkCount');
-      const defaultHosts = document.getElementById('defaultHosts');
       const routerSshEnabled = document.getElementById('routerSshEnabled');
       const routerUsername = document.getElementById('routerUsername');
       const routerPassword = document.getElementById('routerPassword');
@@ -1416,7 +1414,7 @@ INDEX_HTML = r"""<!doctype html>
               </div>
             </div>
             <div class="toolbar" style="margin: 10px 0">
-              <button class="secondary" data-action="apply-host-count" data-network-index="${index}">Apply hosts</button>
+              <button class="fed" data-action="apply-host-count" data-network-index="${index}" title="Resize this network to the host count above">Apply hosts</button>
               <button class="secondary" data-action="add-host" data-network-index="${index}">Add host</button>
             </div>
             <div class="network-body">
@@ -1531,7 +1529,10 @@ INDEX_HTML = r"""<!doctype html>
         }).join('');
         return `
           <div class="conn-editor fed-field">
-            <label>Connections</label>
+            <div class="combo-row" style="justify-content:space-between;margin-bottom:4px">
+              <label style="margin:0">Connections</label>
+              <button class="fed secondary" data-action="refresh-connections" data-network-index="${networkIndex}" data-host-index="${hostIndex}" title="Rebuild connection targets from the current service devices">Refresh</button>
+            </div>
             ${rows || '<p class="muted" style="margin:2px 0 8px">No connections.</p>'}
             <div class="combo-row">
               <select data-field="profile.addconn_type">${connOptionHtml('')}</select>
@@ -1568,6 +1569,7 @@ INDEX_HTML = r"""<!doctype html>
               <div class="span-2">
                 <label>SSH password</label>
                 <input data-field="host.password" value="${escapeHtml(host.password || (profile.slips_variant !== 'none' ? 'G9!tR4#vX7@cM2$kP8n' : 'admin'))}">
+                <button class="fed secondary" style="width:100%;margin-top:4px" data-action="randomize-password" data-network-index="${networkIndex}" data-host-index="${hostIndex}" title="Generate a strong random password">Random</button>
               </div>
               <div class="span-2 fed-field">
                 <label>Repeats</label>
@@ -1600,7 +1602,6 @@ INDEX_HTML = r"""<!doctype html>
                 </div>
               </div>
               <div class="span-12 toolbar">
-                <button class="fed secondary" data-action="generate-host-data" data-network-index="${networkIndex}" data-host-index="${hostIndex}">Regenerate data</button>
                 <button class="danger" data-action="remove-host" data-network-index="${networkIndex}" data-host-index="${hostIndex}">Remove</button>
                 <span class="muted">${escapeHtml(host.data_prompt || '')}</span>
               </div>
@@ -1950,6 +1951,35 @@ INDEX_HTML = r"""<!doctype html>
         })[ch]);
       }
 
+      function randomPassword(length = 20) {
+        // Strong, copy-safe SSH password. Ambiguous glyphs (I/l/1/O/0) and shell/
+        // cron/compose-hostile characters ($ ` " ' # ! : \ space &) are excluded so
+        // the value survives chpasswd, crontab lines, and compose parsing unchanged.
+        const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789@_-.%';
+        const bytes = new Uint32Array(length);
+        if (window.crypto && window.crypto.getRandomValues) {
+          window.crypto.getRandomValues(bytes);
+        } else {
+          for (let i = 0; i < length; i++) bytes[i] = Math.floor(Math.random() * 0xffffffff);
+        }
+        let out = '';
+        for (let i = 0; i < length; i++) out += alphabet[bytes[i] % alphabet.length];
+        return out;
+      }
+
+      function genericHost(name, networkIndex, seq) {
+        // Plain normal-user device used when resizing host lists / applying the
+        // Networks x Default-hosts preset. Carries an empty federation profile so
+        // the node renders as a plain base image until the user composes it.
+        return {
+          id: `h${(networkIndex ?? 0) + 1}_${seq}_${Math.random().toString(36).slice(2, 6)}`,
+          name, type: 'normal-user', image: 'ubuntu:24.04',
+          ssh_enabled: false, username: 'student', password: 'strato',
+          generate_data: false, data_prompt: '', data_content: '', repeats: 1,
+          profile: { slips_variant: 'none', attacker_pivot: false, services: [], connections: [] }
+        };
+      }
+
       function clamp(value, min, max) {
         return Math.min(max, Math.max(min, value));
       }
@@ -2097,27 +2127,6 @@ INDEX_HTML = r"""<!doctype html>
         }
       }
 
-      async function generateHostData(networkIndex, hostIndex) {
-        collect();
-        const host = model.networks[networkIndex].hosts[hostIndex];
-        setStatus(`Generating data for ${host.name}...`);
-        try {
-          const job = await api('api/generate-data', {
-            method: 'POST',
-            body: JSON.stringify({ host, topology: model })
-          });
-          const result = await waitForJob(job.job_id, `Generating data for ${host.name}...`);
-          host.data_content = result.content || '';
-          host.generate_data = true;
-          setStatus(`Generated data for ${host.name}.`);
-          render();
-        } catch (error) {
-          const message = `Could not generate data for ${host.name}: ${error.message}`;
-          setStatus(message);
-          alert(message);
-        }
-      }
-
       firewallGraphEl.addEventListener('pointerdown', (event) => {
         const node = event.target.closest?.('[data-drag-kind][data-node-id]');
         if (!node || !model) return;
@@ -2168,15 +2177,19 @@ INDEX_HTML = r"""<!doctype html>
             });
           }
         }
-        // The connection "add" row holds a *prospective* connection (type +
-        // target + interval) that isn't part of the model until "Add" is
-        // clicked. Editing it must not re-render, otherwise the dropdown
-        // selection is wiped back to the default.
-        if (/^profile\.addconn_/.test(event.target.dataset.field || '')) {
-          collect();
-          return;
-        }
+        const field = event.target.dataset.field || '';
+        // The connection "add" row holds a *prospective* connection that isn't in
+        // the model until "Add" is clicked; re-rendering would wipe its selection.
+        if (/^profile\.addconn_/.test(field)) { collect(); return; }
+        // Free-text / number / textarea edits must NOT re-render: render() rebuilds
+        // the whole card, dropping focus + caret mid-typing and resetting the field
+        // from the model — which is why names, CIDR and the host-count box felt
+        // impossible to edit. Structural controls (select / checkbox) still re-render.
+        const inputType = (event.target.type || '').toLowerCase();
+        const isFreeText = event.target.tagName === 'TEXTAREA' ||
+          (event.target.tagName === 'INPUT' && ['text', 'number', 'url', 'email', 'password', 'search', 'tel'].includes(inputType));
         collect();
+        if (isFreeText) return;
         if (
           event.target.closest('[data-network]') ||
           event.target.closest('[data-router]') ||
@@ -2200,9 +2213,25 @@ INDEX_HTML = r"""<!doctype html>
             return;
           }
           if (event.target.id === 'rebuildNetworks') {
+            collect();
+            if (!model.routers || !model.routers.length) model.routers = defaultRouters();
+            const rootId = model.routers[0].id;
+            const nNets = Math.max(0, Math.min(8, Number(networkCount.value) || 0));
+            const nets = model.networks.slice(0, nNets);
+            while (nets.length < nNets) {
+              const n = nets.length;
+              nets.push({ id: `network${n + 1}`, name: `Network ${n + 1}`, cidr: `10.77.${n + 1}.0/24`, internet: true, router_ids: [rootId], default_router_id: rootId, router_id: rootId, hosts: [genericHost(`Network ${n + 1}-1`, n, 1)] });
+            }
+            model.networks = nets;
+            model.router = model.router || {};
+            model.router.firewall = model.router.firewall || { allowed: [] };
+            const validPairs = new Set(model.networks.flatMap((f) => model.networks.filter((t) => t.id !== f.id).map((t) => `${f.id}->${t.id}`)));
+            model.router.firewall.allowed = (model.router.firewall.allowed || []).filter((p) => validPairs.has(p));
+            model.infrastructure = model.infrastructure || {};
+            model.infrastructure.hackerlab_network_id = model.networks.find((x) => x.id === model.infrastructure.hackerlab_network_id)?.id || model.networks[0]?.id || '';
             selectedId = null;
-            resetModel();
-            return;
+            render();
+            return setStatus(`Applied: ${model.networks.length} network${model.networks.length === 1 ? '' : 's'} (set hosts per network on each card).`);
           }
           if (event.target.id === 'balancedPreset') {
             topologyName.value = 'Balanced three-zone lab';
@@ -2241,18 +2270,50 @@ INDEX_HTML = r"""<!doctype html>
             const networkEl = document.querySelector(`[data-network="${i}"]`);
             const count = Math.max(1, Math.min(48, Number(valueOf(networkEl, 'network.hostCount')) || 1));
             const current = model.networks[i].hosts;
-            while (current.length < count) {
-              current.push({ id: `h${i + 1}_${current.length + 1}`, name: `${model.networks[i].name}-${current.length + 1}`, type: 'normal-user', image: 'ubuntu:24.04', ssh_enabled: false, username: 'student', password: 'strato', generate_data: false, data_prompt: '', data_content: '' });
-            }
+            while (current.length < count) current.push(genericHost(`${model.networks[i].name}-${current.length + 1}`, i, current.length + 1));
             current.length = count;
             render();
+            setStatus(`Applied ${count} host${count === 1 ? '' : 's'} to ${model.networks[i].name}.`);
           }
           if (action === 'add-host') {
             collect();
             const i = Number(event.target.dataset.networkIndex);
             const current = model.networks[i].hosts;
-            current.push({ id: `h${i + 1}_${current.length + 1}`, name: `${model.networks[i].name}-${current.length + 1}`, type: 'normal-user', image: 'ubuntu:24.04', ssh_enabled: false, username: 'student', password: 'strato', generate_data: false, data_prompt: '', data_content: '' });
+            current.push(genericHost(`${model.networks[i].name}-${current.length + 1}`, i, current.length + 1));
             render();
+          }
+          if (action === 'randomize-password') {
+            collect();
+            const i = Number(event.target.dataset.networkIndex);
+            const host = model.networks[i]?.hosts[Number(event.target.dataset.hostIndex)];
+            if (!host) return;
+            host.password = randomPassword();
+            render();
+            return setStatus('Generated a new random SSH password.');
+          }
+          if (action === 'refresh-connections') {
+            collect();
+            const names = new Set(allHostNames());
+            const byRole = serviceRoleHosts();
+            let removed = 0;
+            model.networks.forEach((net) => (net.hosts || []).forEach((h) => {
+              const conns = h.profile?.connections;
+              if (!conns) return;
+              const kept = conns.filter((c) => {
+                const info = CONNECTION_TYPES[c.id];
+                if (info && info.scope === 'internal') {
+                  if (c.target) return names.has(c.target);
+                  return (byRole[info.target_role] || []).length > 0;
+                }
+                return true;
+              });
+              removed += conns.length - kept.length;
+              h.profile.connections = kept;
+            }));
+            render();
+            return setStatus(removed
+              ? `Refreshed connections: removed ${removed} stale connection${removed === 1 ? '' : 's'} (target device no longer present).`
+              : 'Connections refreshed: every target still exists.');
           }
           if (action === 'add-connection') {
             collect();
@@ -2282,10 +2343,6 @@ INDEX_HTML = r"""<!doctype html>
           }
           if (action === 'delete-network') {
             collect();
-            if (model.networks.length <= 1) {
-              setStatus('At least one network is required.');
-              return;
-            }
             model.visual = normalizeVisual(model.visual);
             delete model.visual.networks[model.networks[Number(event.target.dataset.networkIndex)].id];
             model.networks.splice(Number(event.target.dataset.networkIndex), 1);
@@ -2360,7 +2417,6 @@ INDEX_HTML = r"""<!doctype html>
             model.networks[Number(event.target.dataset.networkIndex)].hosts.splice(Number(event.target.dataset.hostIndex), 1);
             render();
           }
-          if (action === 'generate-host-data') return generateHostData(Number(event.target.dataset.networkIndex), Number(event.target.dataset.hostIndex));
           if (action === 'load-topology') return loadTopology(event.target.dataset.id);
           if (action === 'delete-topology') return deleteTopology(event.target.dataset.id);
           if (action === 'start-topology') return startTopology(event.target.dataset.id);
@@ -2573,7 +2629,9 @@ def validate_topology(topology):
         network['router_id'] = network['default_router_id']
     infrastructure = topology.setdefault('infrastructure', {})
     hackerlab_network_id = infrastructure.get('hackerlab_network_id')
-    if not hackerlab_network_id or hackerlab_network_id not in seen_networks:
+    if not networks:
+        infrastructure['hackerlab_network_id'] = ''
+    elif not hackerlab_network_id or hackerlab_network_id not in seen_networks:
         infrastructure['hackerlab_network_id'] = networks[0]['id']
     return topology
 
@@ -3161,7 +3219,7 @@ def ensure_base_image():
     dockerfile = """FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    bash ca-certificates curl iproute2 iputils-ping netcat-openbsd nftables openssh-server python3 sqlite3 sudo \
+    bash ca-certificates curl iproute2 iputils-ping netcat-openbsd nftables nmap openssh-server python3 sqlite3 sudo \
   && mkdir -p /run/sshd \
   && rm -rf /var/lib/apt/lists/*
 """
