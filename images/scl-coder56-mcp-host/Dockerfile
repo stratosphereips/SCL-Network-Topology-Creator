@@ -32,7 +32,7 @@ COPY --from=oc /usr/local/bin/entrypoint.sh /usr/local/bin/entrypoint.sh
 
 # opencode on PATH (the entrypoint + opencode serve rely on it).
 ENV PATH="/root/.opencode/bin:${PATH}"
-RUN mkdir -p /root/.config/opencode/plugins /var/run/sshd /opt/agents \
+RUN mkdir -p /root/.config/opencode/plugins /var/run/sshd /opt/agents /etc/sudoers.d \
  && ln -sf /root/.opencode/bin/opencode /usr/local/bin/opencode \
  && chmod +x /usr/local/bin/entrypoint.sh \
  # labuser + sshd: entrypoint.sh does `chpasswd labuser` and starts sshd, assuming

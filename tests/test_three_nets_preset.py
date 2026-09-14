@@ -45,7 +45,7 @@ def test_three_nets_structure():
     assert set(hosts) == {
         'smb-server', 'web-server', 'other-server-1',
         'client-1', 'client-2', 'client-3', 'client-4', 'client-5',
-        'ad-server', 'db-server', 'outside-node',
+        'ad-server', 'db-server', 'outside-node', 'attacker',
     }
     # CYST IPs preserved: servers .2/.4/.5, AD .2, DB .3, outside .195.
     # Clients shifted +1 (CYST .2-.7 -> .3-.7): .2 is reserved on the

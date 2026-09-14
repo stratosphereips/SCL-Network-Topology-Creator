@@ -31,6 +31,14 @@ mkdir -p /root/.config/opencode /root/.local/share/opencode /var/log/opencode
 
 # Write opencode.json configuration with environment variable placeholders
 # OpenCode will substitute {env:VAR_NAME} with actual environment variable values
+#
+# IMAGE-BAKED AGENT FRONTMODEL REPIN: the opencode image ships markdown agents
+# (coder56_lead/phase/reporter/verifier) whose frontmatter `model:` is pinned to
+# the model that was global at image-build time. Markdown agents OVERRIDE the
+# generated opencode.json agent entries, so without this repin a host-level
+# llm_model override silently keeps launching the baked model against the
+# overridden provider (ProviderModelNotFoundError on every prompt).
+sed -i "s|^model: .*$|model: einfra/qwen3.8-27b|" /root/.config/opencode/agents/*.md 2>/dev/null || true
 cat > /root/.config/opencode/opencode.json <<'OPENCODE_JSON'
 {
   "$$schema": "https://opencode.ai/config.json",
@@ -40,7 +48,7 @@ cat > /root/.config/opencode/opencode.json <<'OPENCODE_JSON'
     "bash": true
   },
   "provider": {
-    "e-infra-chat": {
+    "einfra": {
       "npm": "@ai-sdk/openai-compatible",
       "name": "e-INFRA CZ Chat API",
       "options": {
@@ -48,8 +56,8 @@ cat > /root/.config/opencode/opencode.json <<'OPENCODE_JSON'
         "apiKey": "{env:OPENCODE_API_KEY}"
       },
       "models": {
-        "glm-5.2": {
-          "name": "glm-5.2",
+        "qwen3.8-27b": {
+          "name": "qwen3.8-27b",
           "limit": {
             "context": 200000,
             "output": 65536
@@ -65,7 +73,7 @@ cat > /root/.config/opencode/opencode.json <<'OPENCODE_JSON'
       }
     }
   },
-  "model": "e-infra-chat/glm-5.2",
+  "model": "einfra/qwen3.8-27b",
   "autoupdate": false,
   "subagent_depth": 2,
   "compaction": {
@@ -89,7 +97,7 @@ cat > /root/.config/opencode/opencode.json <<'OPENCODE_JSON'
   },
   "agent": {
     "coder56": {
-      "model": "e-infra-chat/glm-5.2",
+      "model": "einfra/qwen3.8-27b",
       "bash": true,
       "edit": true,
       "write": true,
@@ -109,7 +117,7 @@ OPENCODE_JSON
 # Write auth.json - OpenCode will also use {env:} placeholders here
 cat > /root/.local/share/opencode/auth.json <<'AUTH_JSON'
 {
-  "e-infra-chat": {
+  "einfra": {
     "type": "api",
     "key": "{env:OPENCODE_API_KEY}"
   }
