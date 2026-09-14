@@ -721,3 +721,71 @@ def ensure_greedy_image(topology, force_rebuild=False):
     if build.returncode != 0:
         raise RuntimeError(build.stderr or build.stdout or f'Failed to build {app.GREEDY_HOST_IMAGE}')
     print(f"✅ Built Greedy-host image: {app.GREEDY_HOST_IMAGE}")
+
+
+def ensure_leosac_image(topology, force_rebuild=False):
+    """Build the Leosac-host image if any host is a `leosac-server`.
+
+    Mirrors ensure_erpnext_image's build-from-context + OCI-label staleness
+    pattern. The image compiles the Leosac C++ core (cmake + ODB ORM, pinned
+    submodules) and builds the Ember web UI at build time, so it needs no
+    runtime egress. The cloned repo/refs come from LEOSAC_URL/REF +
+    LEOSAC_WEB_URL/WEB_REF. Existing tags are reused only when their OCI
+    source+revision labels match all four values, so a stale image that
+    predates a ref bump is rebuilt. WARNING: the core compile is heavy
+    (~20-60 min on the 4-core arm64 box).
+    """
+    has_leosac_host = any(
+        host.get('type') == 'leosac-server'
+        for network in topology.get('networks', [])
+        for host in network.get('hosts', [])
+    )
+    if not has_leosac_host:
+        return
+
+    expected = (
+        f'{app.LEOSAC_URL} {app.LEOSAC_WEB_URL} '
+        f'core={app.LEOSAC_REF} web={app.LEOSAC_WEB_REF}'
+    )
+    if not force_rebuild:
+        result = subprocess.run(
+            [
+                'docker', 'image', 'inspect',
+                '--format',
+                '{{index .Config.Labels "org.opencontainers.image.source"}} '
+                '{{index .Config.Labels "org.opencontainers.image.revision"}}',
+                app.LEOSAC_HOST_IMAGE,
+            ],
+            capture_output=True, text=True,
+        )
+        if result.returncode == 0 and result.stdout.strip() == expected:
+            print(f"✅ Leosac-host image exists: {app.LEOSAC_HOST_IMAGE}")
+            return
+        if result.returncode == 0:
+            print(
+                f"♻️ Rebuilding stale Leosac-host image: "
+                f"found labels {result.stdout.strip()!r}, expected {expected!r}"
+            )
+
+    context = Path(os.environ.get('IMAGES_DIR', '/app/images')) / 'scl-leosac-host'
+    if not context.exists():
+        raise RuntimeError(f'Leosac-host image build context not found: {context}')
+    print(
+        f"🔨 Building Leosac-host image: {app.LEOSAC_HOST_IMAGE} from {context} "
+        f"(core: {app.LEOSAC_URL}@{app.LEOSAC_REF}, web: {app.LEOSAC_WEB_URL}@{app.LEOSAC_WEB_REF})"
+    )
+    build = subprocess.run(
+        [
+            'docker', 'build',
+            '--build-arg', f'LEOSAC_URL={app.LEOSAC_URL}',
+            '--build-arg', f'LEOSAC_REF={app.LEOSAC_REF}',
+            '--build-arg', f'LEOSAC_WEB_URL={app.LEOSAC_WEB_URL}',
+            '--build-arg', f'LEOSAC_WEB_REF={app.LEOSAC_WEB_REF}',
+            '-t', app.LEOSAC_HOST_IMAGE,
+            str(context),
+        ],
+        capture_output=True, text=True, check=False,
+    )
+    if build.returncode != 0:
+        raise RuntimeError(build.stderr or build.stdout or f'Failed to build {app.LEOSAC_HOST_IMAGE}')
+    print(f"✅ Built Leosac-host image: {app.LEOSAC_HOST_IMAGE}")

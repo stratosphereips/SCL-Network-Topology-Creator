@@ -349,7 +349,7 @@ def host_script(topology, network, host, host_index, gateway):
     data_content = host.get('data_content') or default_data_for_host(topology, network, host)
     service_block = role_service_block(host['type'])
     foreground_service_block = ''
-    if host['type'] in ('ad-server', 'windows-client', 'vuln-web-server', 'db-server', 'greedy-server'):
+    if host['type'] in ('ad-server', 'windows-client', 'vuln-web-server', 'db-server', 'greedy-server', 'erpnext-server', 'leosac-server'):
         # The supervisor must become the container's foreground process so a failed
         # stack/DC fails the container instead of being hidden behind `tail -f /dev/null`.
         foreground_service_block = service_block
@@ -492,6 +492,13 @@ def role_service_block(host_type):
         # + workers + nginx in the foreground so a failed stack fails the container
         # (mirrors greedy/openhospital). Foreground completion block.
         return "exec /usr/local/bin/erpnext-app-start.sh"
+    if host_type == 'leosac-server':
+        # Leosac supervisor: brings up PostgreSQL + the leosac core (websock-api
+        # :8888), bootstraps the first admin + seeds demo users/doors/credentials
+        # on first boot, then serves the Ember web UI behind nginx in the
+        # foreground so a failed stack fails the container (mirrors
+        # erpnext/greedy). Foreground completion block.
+        return "exec /usr/local/bin/leosac-app-start.sh"
     if host_type == 'db-server':
         # DB host supervisor: provisions the weak-cred SSH account + win flag on first
         # boot, then runs `postgres` in the foreground (as the postgres user) so a failed

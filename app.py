@@ -178,6 +178,27 @@ ERPNEXT_REF = os.environ.get(
     'ERPNEXT_REF', 'version-15'
 )
 
+# SCL Leosac host (`leosac-server`) — Leosac physical access control, full
+# stack: C++ core + websock-api module (:8888, WebSocket JSON API) +
+# PostgreSQL (:5432) + Ember web UI behind nginx (:80). Core + web are cloned
+# + built at image-build time (cmake/ODB + yarn/ember); the first admin +
+# demo users/doors/credentials are seeded at first boot. The PostgreSQL
+# datadir is on a named volume so data persists across topology restarts.
+# Override the cloned repo/branch with the LEOSAC_*/LEOSAC_WEB_* env vars.
+LEOSAC_HOST_IMAGE = 'scl-leosac-host:0.1'
+LEOSAC_URL = os.environ.get(
+    'LEOSAC_URL', 'https://github.com/leosac/access-control'
+)
+LEOSAC_REF = os.environ.get(
+    'LEOSAC_REF', '954e17225ff448b1ad78df3ab22cacb036a85cbb'
+)
+LEOSAC_WEB_URL = os.environ.get(
+    'LEOSAC_WEB_URL', 'https://github.com/leosac/access-control-web'
+)
+LEOSAC_WEB_REF = os.environ.get(
+    'LEOSAC_WEB_REF', 'd9a41ad75dfd357112f5483b28184155b6608f52'
+)
+
 # Map of base OS images to their OpenCode-enabled variants
 # Built dynamically by ensure_opencode_images()
 OPENCODE_IMAGES_CACHE = {}
@@ -285,6 +306,11 @@ HOST_TYPES = {
         'label': 'Greedy Cars (integrador)',
         'ports': ['80/tcp', '3306/tcp', '8080/tcp', '8081/tcp', '9000/tcp'],
         'description': 'Greedy Cars integrador web app (ingSoftII): Spring Boot API (:8080) + adminer (:9000) + Node frontend service (:8081) + MariaDB (:3306) behind an nginx front door on :80 serving the gredy_cars_client SPA. Cloned from the upstream repo at a pinned ref at image-build time; MariaDB schema + demo dataset seeded on first boot (greedy-app-start.sh + greedy-seed.sql, idempotent). Seeded users include the bootstrap admin and demo client/employee accounts with weak, documented passwords.',
+    },
+    'leosac-server': {
+        'label': 'Leosac (access control)',
+        'ports': ['80/tcp', '8888/tcp', '5432/tcp'],
+        'description': 'Leosac physical access control, full stack: C++ core + websock-api module (:8888, WebSocket JSON API — the Ember UI protocol) + PostgreSQL (:5432, weak planted superuser creds, ODB schema + seeded data on a named volume) + Ember web UI behind nginx (:80). Core + web UI cloned + built from upstream at image-build time; first admin (admin/admin) + demo users/doors/RFID credentials seeded at first boot via the WS API. Control paths: weak user passwords on the WS API, weak PostgreSQL superuser on :5432.',
     },
 }
 

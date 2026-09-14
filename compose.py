@@ -345,6 +345,8 @@ def generate_compose(topology, opencode_images=None):
                 host_image = app.GREEDY_HOST_IMAGE
             elif host.get('type') == 'erpnext-server':
                 host_image = app.ERPNEXT_HOST_IMAGE
+            elif host.get('type') == 'leosac-server':
+                host_image = app.LEOSAC_HOST_IMAGE
             elif host.get('type') == 'db-server':
                 host_image = app.DB_HOST_IMAGE
             elif host_has_agents:
@@ -438,6 +440,31 @@ def generate_compose(topology, opencode_images=None):
                     'timeout': '10s',
                     'retries': 24,
                     'start_period': '360s',
+                }
+
+            if host.get('type') == 'leosac-server':
+                # Persistence: the PostgreSQL datadir on a named volume so the
+                # ODB schema + seeded users/doors/credentials survive topology
+                # stop/start (compose down without -v preserves named volumes).
+                # The supervisor (leosac-app-start.sh) creates the first admin
+                # + seeds demo data only when that volume is fresh. start_period
+                # gives the first-boot stack (postgres + leosac schema creation
+                # + WS seeding + nginx) room before the healthcheck is
+                # evaluated; subsequent boots are much faster.
+                service_config['restart'] = 'unless-stopped'
+                pg_vol = f'leosac-pg-{service_name}'
+                compose.setdefault('volumes', {})[pg_vol] = {
+                    'name': f'{project_prefix}-{service_name}-pg-data',
+                }
+                service_config['volumes'] = [
+                    f'{pg_vol}:/var/lib/postgresql/16/main',
+                ]
+                service_config['healthcheck'] = {
+                    'test': ['CMD', '/usr/local/bin/leosac-healthcheck.sh'],
+                    'interval': '15s',
+                    'timeout': '10s',
+                    'retries': 28,
+                    'start_period': '420s',
                 }
 
             # Conditional OpenCode configuration (ports, volumes, environment, healthcheck) only when agents present

@@ -124,6 +124,49 @@ def test_generate_compose_vuln_web_server_uses_web_image(make_topology):
     )
 
 
+def test_generate_compose_leosac_server_uses_leosac_image(make_topology):
+    """A leosac-server host must select the dedicated Leosac-host image (not the
+    plain BASE_IMAGE / opencode variant), put the PostgreSQL datadir on a named
+    volume so seeded data survives stop/start, carry the leosac-healthcheck.sh
+    probe, and run the Leosac supervisor as its foreground completion block."""
+    spec = {
+        "name": "Leosac Lab",
+        "networks": [
+            {
+                "id": "net1", "name": "Net One", "cidr": "10.77.44.0/24",
+                "internet": True,
+                "hosts": [
+                    {"id": "les1", "name": "leosac", "type": "leosac-server"},
+                ],
+            }
+        ],
+    }
+    topo = make_topology(spec, topo_id="leosac-lab")
+    out = app.generate_compose(topo)
+    service = out['services']['net1-les1']
+    assert service['image'] == app.LEOSAC_HOST_IMAGE
+    # PostgreSQL datadir on a fixed-name named volume (persistence).
+    assert any(
+        v.split(':', 1)[0] == 'leosac-pg-net1-les1'
+        for v in service['volumes']
+    )
+    assert out['volumes']['leosac-pg-net1-les1']['name'] == (
+        'scl-topology-leosac-lab-net1-les1-pg-data'
+    )
+    # The image's own healthcheck supervisor (markers + all three services).
+    assert service['healthcheck']['test'] == [
+        'CMD', '/usr/local/bin/leosac-healthcheck.sh'
+    ]
+    assert service['healthcheck']['start_period'] == '420s'
+    assert service['restart'] == 'unless-stopped'
+    # The Leosac supervisor is the foreground completion block, AFTER the
+    # init-ready marker (guards the scripts.py foreground-tuple wiring).
+    assert 'exec /usr/local/bin/leosac-app-start.sh' in service['command'][2]
+    assert service['command'][2].index('touch /tmp/scl-host-init-ready') < (
+        service['command'][2].index('exec /usr/local/bin/leosac-app-start.sh')
+    )
+
+
 def test_generate_compose_rich_golden(rich_topology, golden):
     out = app.generate_compose(rich_topology)
     golden('compose_rich.json', _normalize_compose(out))
