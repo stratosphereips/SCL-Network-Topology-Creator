@@ -165,8 +165,10 @@ SLIPS_PROFILES = {
     },
 }
 
-# Service registries. 'snmp' and 'web' are mutually exclusive on a node
-# (both would fight for port 8000) — enforced by EXCLUSIVE_SERVICE_GROUPS.
+# Service registry (built-ins; the mounted build source's services.json is
+# merged over these at startup). Services are freely combinable on a node —
+# snmp+web both serve /www on 8000, but that clash is benign (same files, and
+# the second http.server simply fails to bind while snmpd/vsftpd keep running).
 SERVICES = {
     'ftp': {
         'label': 'FTP server',
@@ -179,54 +181,70 @@ SERVICES = {
         'entrypoint': 'snmp-entrypoint.sh',
         'ports': ['161/udp'],
         'target_role': 'snmp',
-        'group': 'http',
     },
     'web': {
         'label': 'Web server',
         'entrypoint': 'web-entrypoint.sh',
         'ports': ['8000/tcp'],
         'target_role': 'web',
-        'group': 'http',
+    },
+    'sqlite': {
+        'label': 'SQLite DB',
+        'entrypoint': 'service-entrypoint.sh',
+        'ports': ['8010/tcp'],
+        'target_role': 'sqlite',
     },
 }
 
-# Only one service per group may be selected on a node.
-EXCLUSIVE_SERVICE_GROUPS = [['snmp', 'web']]
-
 # Connection registry is loaded from connections.json (next to app.py) so new
 # external/internal connection types can be added without touching code.
+# Commands use absolute /scripts/ paths: the images bake the scripts there and
+# cron's default PATH does not include /scripts.
 DEFAULT_CONNECTION_TYPES = {
     'wikipedia': {
         'label': 'Wikipedia (external)',
         'scope': 'external',
         'interval': '*/5 * * * *',
-        'command': 'internet-traffic.sh wikipedia',
+        'command': '/scripts/internet-traffic.sh wikipedia',
     },
     'google': {
         'label': 'Google (external)',
         'scope': 'external',
         'interval': '*/7 * * * *',
-        'command': 'internet-traffic.sh google',
+        'command': '/scripts/internet-traffic.sh google',
+    },
+    'reddit': {
+        'label': 'Reddit, 30s reload (external)',
+        'scope': 'external',
+        'interval': '*/5 * * * *',
+        'command': '/scripts/internet-traffic.sh reddit',
     },
     'images': {
         'label': 'Images (external)',
         'scope': 'external',
         'interval': '*/7 * * * *',
-        'command': 'internet-traffic.sh images',
+        'command': '/scripts/internet-traffic.sh images',
     },
     'ftp_check': {
         'label': 'FTP check (internal)',
         'scope': 'internal',
         'interval': '* * * * *',
-        'command': 'check-ftp.sh {target}',
+        'command': '/scripts/check-ftp.sh {target}',
         'target_role': 'ftp',
     },
     'web_internal': {
         'label': 'Internal web (internal)',
         'scope': 'internal',
         'interval': '*/2 * * * *',
-        'command': 'curl-website.sh {target}',
+        'command': '/scripts/curl-website.sh http://{target}:8000',
         'target_role': 'web',
+    },
+    'sqlite_check': {
+        'label': 'SQLite query (internal)',
+        'scope': 'internal',
+        'interval': '*/2 * * * *',
+        'command': '/scripts/check-sqlite.sh {target}',
+        'target_role': 'sqlite',
     },
 }
 
@@ -252,10 +270,6 @@ CONNECTION_TYPES = _load_connection_types()
 # Extra connection types that hit a specific device rather than a role. The
 # plugin resolves {target} by hostname (stable across IP changes); a Role target
 # is only a fallback for a connection whose target device was never chosen.
-def _service_group_of(service_id):
-    return (SERVICES.get(service_id) or {}).get('group')
-
-
 def _normalize_profile(profile):
     """Coerce a host profile to a known shape; drop unknown/nonexistent ids.
 
@@ -270,7 +284,6 @@ def _normalize_profile(profile):
     if slips_variant not in SLIPS_PROFILES:
         slips_variant = 'none'
     services = [s for s in (profile.get('services') or []) if s in SERVICES]
-    services = _dedupe_exclusive_services(services)
     connections = _normalize_connections(profile.get('connections'), profile.get('internal'))
     return {
         'role': profile.get('role') if profile.get('role') == 'attacker' else None,
@@ -280,19 +293,6 @@ def _normalize_profile(profile):
         'connections': connections,
     }
 
-
-def _dedupe_exclusive_services(services):
-    """Drop services that would conflict within a mutually-exclusive group."""
-    selected_groups = set()
-    result = []
-    for service_id in services:
-        group = _service_group_of(service_id)
-        if group and group in selected_groups:
-            continue
-        if group:
-            selected_groups.add(group)
-        result.append(service_id)
-    return result
 
 def _normalize_connections(connections, internal=None):
     """Unify profile connections (external + internal) into list of instances.
@@ -1431,7 +1431,7 @@ INDEX_HTML = r"""<!doctype html>
         return Object.entries(registry)
           .filter(([, info]) => !scope || info.scope === scope)
           .map(([id, info]) =>
-            `<label class="checkbox-line" data-group="${info.group || ''}"><input data-field="${field}" type="checkbox" value="${id}" data-group="${info.group || ''}" ${sel.has(id) ? 'checked' : ''}> ${escapeHtml(info.label)}</label>`
+            `<label class="checkbox-line"><input data-field="${field}" type="checkbox" value="${id}" ${sel.has(id) ? 'checked' : ''}> ${escapeHtml(info.label)}</label>`
           ).join('');
       }
 
@@ -2167,16 +2167,6 @@ INDEX_HTML = r"""<!doctype html>
 
       document.addEventListener('input', (event) => {
         if (!event.target.matches('input, select, textarea')) return;
-        const group = event.target.dataset.group;
-        if (group && event.target.type === 'checkbox' && event.target.checked) {
-          // mutually exclusive services (e.g. snmp vs web) within a group
-          const hostRoot = event.target.closest('[data-host]');
-          if (hostRoot) {
-            hostRoot.querySelectorAll(`input[data-field="${event.target.dataset.field}"][data-group="${group}"]`).forEach((other) => {
-              if (other !== event.target) other.checked = false;
-            });
-          }
-        }
         const field = event.target.dataset.field || '';
         // The connection "add" row holds a *prospective* connection that isn't in
         // the model until "Add" is clicked; re-rendering would wipe its selection.

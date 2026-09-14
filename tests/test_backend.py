@@ -263,12 +263,42 @@ def test_generate_compose_all_hosts_present():
 # new federation behaviours: exclusive services, repeats, internal targets,
 # egress default
 # --------------------------------------------------------------------------
-def test_snmp_and_web_are_mutually_exclusive():
-    p = app._normalize_profile({"services": ["snmp", "web"]})
-    assert p["services"] in (["snmp"], ["web"])  # only first of the group kept
+def test_services_are_not_mutually_exclusive():
+    # Any combination of services is allowed on one node (the snmp+web
+    # port-8000 overlap is benign: same /www content, second server fails to
+    # bind while the daemons keep running).
+    p = app._normalize_profile({"services": ["snmp", "ftp"]})
+    assert p["services"] == ["snmp", "ftp"]
 
     p = app._normalize_profile({"services": ["web", "snmp"]})
-    assert p["services"] == ["web"]  # first occurrence retained, snmp dropped
+    assert p["services"] == ["web", "snmp"]
+
+    p = app._normalize_profile({"services": ["ftp", "snmp", "web", "sqlite"]})
+    assert p["services"] == ["ftp", "snmp", "web", "sqlite"]
+
+
+def test_new_connection_types_registered():
+    assert "reddit" in app.CONNECTION_TYPES
+    assert app.CONNECTION_TYPES["reddit"]["scope"] == "external"
+    assert app.CONNECTION_TYPES["reddit"]["command"] == "/scripts/internet-traffic.sh reddit"
+
+    assert "sqlite_check" in app.CONNECTION_TYPES
+    sqlite_check = app.CONNECTION_TYPES["sqlite_check"]
+    assert sqlite_check["scope"] == "internal"
+    assert sqlite_check["target_role"] == "sqlite"
+    assert sqlite_check["command"] == "/scripts/check-sqlite.sh {target}"
+
+
+def test_connection_commands_use_absolute_script_paths():
+    # The images bake the scripts into /scripts and cron's default PATH does
+    # not include it, so bare names would never resolve.
+    for spec in app.CONNECTION_TYPES.values():
+        assert "/scripts/" in spec["command"], spec
+
+
+def test_sqlite_service_is_a_selectable_role_target():
+    assert "sqlite" in app.SERVICES
+    assert app.SERVICES["sqlite"]["target_role"] == "sqlite"
 
 
 def test_internal_connections_normalized_with_target():
@@ -393,7 +423,7 @@ def test_repeats_replica_cron_baked_everywhere():
     for replica in ("slips-1", "slips-1-2", "slips-1-3"):
         host = valid["networks"][0]["hosts"][0]
         cfg = app.node_config(valid, {**host, "name": replica}, host["profile"], peers)
-        assert "*/5 * * * * internet-traffic.sh wikipedia" in cfg, cfg
+        assert "*/5 * * * * /scripts/internet-traffic.sh wikipedia" in cfg, cfg
 
 
 def test_repeats_replicas_are_never_attacker_pivot():

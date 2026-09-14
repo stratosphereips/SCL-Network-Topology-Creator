@@ -3,32 +3,45 @@
     "label": "Wikipedia (external)",
     "scope": "external",
     "interval": "*/5 * * * *",
-    "command": "internet-traffic.sh wikipedia"
+    "command": "/scripts/internet-traffic.sh wikipedia"
   },
   "google": {
     "label": "Google (external)",
     "scope": "external",
     "interval": "*/7 * * * *",
-    "command": "internet-traffic.sh google"
+    "command": "/scripts/internet-traffic.sh google"
+  },
+  "reddit": {
+    "label": "Reddit, 30s reload (external)",
+    "scope": "external",
+    "interval": "*/5 * * * *",
+    "command": "/scripts/internet-traffic.sh reddit"
   },
   "images": {
     "label": "Images (external)",
     "scope": "external",
     "interval": "*/7 * * * *",
-    "command": "internet-traffic.sh images"
+    "command": "/scripts/internet-traffic.sh images"
   },
   "ftp_check": {
     "label": "FTP check (internal)",
     "scope": "internal",
     "interval": "* * * * *",
-    "command": "check-ftp.sh {target}",
+    "command": "/scripts/check-ftp.sh {target}",
     "target_role": "ftp"
   },
   "web_internal": {
     "label": "Internal web (internal)",
     "scope": "internal",
     "interval": "*/2 * * * *",
-    "command": "curl-website.sh {target}",
+    "command": "/scripts/curl-website.sh http://{target}:8000",
     "target_role": "web"
+  },
+  "sqlite_check": {
+    "label": "SQLite query (internal)",
+    "scope": "internal",
+    "interval": "*/2 * * * *",
+    "command": "/scripts/check-sqlite.sh {target}",
+    "target_role": "sqlite"
   }
 }
