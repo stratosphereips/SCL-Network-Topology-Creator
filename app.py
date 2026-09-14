@@ -205,7 +205,7 @@ OPENCODE_IMAGES_CACHE = {}
 LLM_URL = os.environ.get('DASHBOARD_LLM_URL', 'http://dashboard/api/llm/chat')
 OPENCODE_API_KEY = os.environ.get('OPENCODE_API_KEY', '')
 LLM_URL_FULL = os.environ.get('LLM_URL', 'https://llm.ai.e-infra.cz/v1')
-LLM_MODEL = os.environ.get('LLM_MODEL', 'glm-5.2')
+LLM_MODEL = os.environ.get('LLM_MODEL', 'glm-5.3')
 LLM_PROVIDER = os.environ.get('LLM_PROVIDER', 'e-infra-chat')
 AGENTS_HOST_PATH = os.environ.get('AGENTS_HOST_PATH', '/agent-scripts')
 # Host path bind-mounted (rw) into opencode + SLIPS topology containers so their

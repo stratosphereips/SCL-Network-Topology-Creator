@@ -75,16 +75,18 @@ SCHEDULES = [
     ("weekend_off", "Empty schedule (denies on weekends)", []),
 ]
 
-# RFID card credentials: alias, card number, bit count, owner username.
+# RFID card credentials: alias, card-id (colon-hex string, e.g. "0A:2b:8E:9f" —
+# the format the server parses; anything else crashes the credential handler),
+# nb-bits, owner username.
 CREDENTIALS = [
-    ("card_security_master", 424242, 32, "security"),
-    ("card_guard1", 1001, 26, "guard1"),
-    ("card_reception", 1002, 26, "reception"),
-    ("card_hr", 1003, 26, "hr"),
-    ("card_maintenance", 1004, 26, "maintenance"),
-    ("card_auditor", 1005, 26, "auditor"),
-    ("badge_contractor_a", 900001, 32, None),   # unassigned (owner-less)
-    ("badge_contractor_b", 900002, 32, None),
+    ("card_security_master", "42:42:42:42", 32, "security"),
+    ("card_guard1", "00:00:03:E9", 32, "guard1"),
+    ("card_reception", "00:00:03:EA", 32, "reception"),
+    ("card_hr", "00:00:03:EB", 32, "hr"),
+    ("card_maintenance", "00:00:03:EC", 32, "maintenance"),
+    ("card_auditor", "00:00:03:ED", 32, "auditor"),
+    ("badge_contractor_a", "0D:B9:11:01", 32, None),   # unassigned (owner-less)
+    ("badge_contractor_b", "0D:B9:11:02", 32, None),
 ]
 
 ZONES = [
@@ -170,22 +172,21 @@ async def seed(c):
                 "name": n, "description": d}})
         await step(c, f"group {name}", make_group)
 
-    # memberships
+    # memberships — the read endpoint only supports a concrete membership_id
+    # (0 throws not-found), so dedup by attempting the create and treating an
+    # "already a member" failure as success.
     for username, group, rank in MEMBERSHIPS:
         async def make_membership(u=username, g=group, r=rank):
             uid, gid = await find_user_id(c, u), await find_group_id(c, g)
             if not uid or not gid:
                 raise RuntimeError(f"missing user/group for {u}/{g}")
-            data = (await c.crud(
-                "user-group-membership", "read",
-                {"user-group-membership_id": 0})).get("data", [])
-            for m in data:
-                attrs = m.get("attributes", {})
-                if attrs.get("user_id") == uid and attrs.get("group_id") == gid:
-                    return
-            await c.crud("user-group-membership", "create",
-                         {"attributes": {"user_id": uid, "group_id": gid,
-                                         "rank": r}})
+            try:
+                await c.crud("user-group-membership", "create",
+                             {"attributes": {"user_id": uid, "group_id": gid,
+                                             "rank": r}})
+            except RuntimeError as exc:
+                if "already" not in str(exc):
+                    raise
         await step(c, f"membership {username}@{group}", make_membership)
 
     # doors
@@ -208,17 +209,20 @@ async def seed(c):
                 "name": n, "description": d, "timeframes": tf}})
         await step(c, f"schedule {name}", make_sched)
 
-    # credentials (rfid cards)
+    # credentials (rfid cards) — validity flags are TOP-LEVEL dashed keys
+    # ("validity-enabled"), not a nested object (extract_validity_with_default).
     for alias, card_id, nb_bits, owner in CREDENTIALS:
         async def make_cred(a=alias, cid=card_id, nb=nb_bits, o=owner):
             if await find_by_alias(c, "credential", a) is not None:
                 return
             attrs = {"alias": a,
                      "description": f"Demo RFID card {a}",
-                     "card-id": str(cid), "nb-bits": nb,
-                     "validity": {"enabled": True}}
+                     "card-id": cid, "nb-bits": nb,
+                     "validity-enabled": True}
             if o:
                 attrs["owner_id"] = await find_user_id(c, o)
+            else:
+                attrs["owner_id"] = 0
             await c.crud("credential", "create",
                          {"credential-type": "rfid-card", "attributes": attrs})
         await step(c, f"credential {alias}", make_cred)

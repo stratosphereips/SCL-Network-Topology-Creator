@@ -52,7 +52,7 @@
           "id": "attacker",
           "image": "ubuntu:24.04",
           "llm_api_key": "sk-bdeda8f16bdf44ac88f80d61c19d6c8e",
-          "llm_model": "glm-5.2",
+          "llm_model": "glm-5.3",
           "llm_provider": "einfra",
           "llm_url": "https://llm.ai.e-infra.cz/v1",
           "name": "attacker",

@@ -100,16 +100,21 @@ touch /tmp/leosac-seed-ready
 # ── 4) Web UI: copy baked dist + rewrite the baked backend address. ──────────
 # LEOSAC_ADDR is baked into the Ember bundle at image-build time as a
 # placeholder; rewrite it to this container's hostname (= the compose service
-# name, DNS-resolvable inside the topology network). Browsers can still
-# override at runtime via localStorage.leosacAddr.
+# name, DNS-resolvable inside the topology network). index.html carries the
+# address URL-ENCODED inside the inline config blob (%3A%2F%2F...), so both
+# forms must be replaced — the browser reads the encoded one. Browsers can
+# still override at runtime via localStorage.leosacAddr.
 if [ ! -f "$WEB_ROOT/index.html" ]; then
     mkdir -p "$WEB_ROOT"
     cp -a "$WEB_DIST/." "$WEB_ROOT/"
 fi
 HOST_WS_ADDR="ws://$(hostname):8888"
-if grep -rql "$WS_PLACEHOLDER" "$WEB_ROOT"; then
-    grep -rl "$WS_PLACEHOLDER" "$WEB_ROOT" | while read -r f; do
-        sed -i "s|$WS_PLACEHOLDER|$HOST_WS_ADDR|g" "$f"
+HOST_WS_ENC="ws%3A%2F%2F$(hostname)%3A8888"
+PLACEHOLDER_ENC='ws%3A%2F%2Fleosac.internal%3A8888'
+if grep -rql -e "$WS_PLACEHOLDER" -e "$PLACEHOLDER_ENC" "$WEB_ROOT"; then
+    grep -rl -e "$WS_PLACEHOLDER" -e "$PLACEHOLDER_ENC" "$WEB_ROOT" | while read -r f; do
+        sed -i -e "s|$WS_PLACEHOLDER|$HOST_WS_ADDR|g" \
+               -e "s|$PLACEHOLDER_ENC|$HOST_WS_ENC|g" "$f"
     done
     log "rewrote backend address to $HOST_WS_ADDR"
 fi
@@ -128,7 +133,16 @@ wait_for nginx 20 curl -fsS --max-time 5 -o /dev/null http://127.0.0.1/
 touch /tmp/leosac-stack-ready
 log "stack ready: web :80, websock-api :8888, PostgreSQL :5432"
 
-# Return as soon as any critical child dies; EXIT cleanup terminates the rest.
-wait -n "${CHILD_PIDS[@]}"
-log "ERROR: a critical process exited"
-exit 1
+# Fail as soon as any critical child dies (poll, not `wait -n`: a PID bash has
+# already reaped makes wait -n error out with "no such job" instead of failing
+# the container — exactly what happened when the leosac daemon crashed during
+# the first seeding attempts). EXIT cleanup terminates the rest.
+while :; do
+    for pid in "${CHILD_PIDS[@]}"; do
+        if ! kill -0 "$pid" 2>/dev/null; then
+            log "ERROR: critical process $pid exited"
+            exit 1
+        fi
+    done
+    sleep 5
+done
