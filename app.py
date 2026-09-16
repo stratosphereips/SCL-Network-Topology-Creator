@@ -188,6 +188,16 @@ SERVICES = {
         'ports': ['8000/tcp'],
         'target_role': 'web',
     },
+    'apache': {
+        # The slips-image webpage (apache on :8000, /var/www/slips_site).
+        # Meaningful on sensor hosts (node_config maps it to RUN_WEB=1);
+        # on a plain service host it is translated to the 'web' service,
+        # which serves the same consolidated frontpage from /www.
+        'label': 'Apache webpage',
+        'entrypoint': 'slips-run-web',
+        'ports': ['8000/tcp'],
+        'target_role': 'web',
+    },
     'sqlite': {
         'label': 'SQLite DB',
         'entrypoint': 'service-entrypoint.sh',
@@ -361,6 +371,11 @@ def _connection_cron_lines(topology, profile):
             hprofile = host.get('profile') or {}
             for svc in hprofile.get('services', []):
                 role_to_host.setdefault(svc, host['name'])
+                role = (SERVICES.get(svc) or {}).get('target_role')
+                if role:
+                    # e.g. 'apache' also counts as a 'web' provider, so
+                    # web_internal's fallback finds slips-served webpages.
+                    role_to_host.setdefault(role, host['name'])
     for entry in profile.get('connections', []):
         ct = CONNECTION_TYPES.get(entry.get('id'))
         if not ct:
@@ -404,9 +419,8 @@ def keepalive_targets(topology):
             services = hprofile.get('services') or []
             if 'ftp' in services:
                 targets.append(f'http://{host["name"]}:21')
-            serves_web = 'web' in services
-            if not serves_web and hprofile.get('slips_variant', 'none') != 'none' and host.get('run_web'):
-                serves_web = True
+            serves_web = ('web' in services or 'apache' in services or
+                          (hprofile.get('slips_variant', 'none') != 'none' and host.get('run_web')))
             if serves_web:
                 targets.append(f'http://{host["name"]}:8000')
     return targets
@@ -416,21 +430,30 @@ def node_config(topology, host, profile, peer_names, gateway_ip=''):
     """Return the node.conf content (bash-sourcable) encoding a node's setup."""
     profile = profile or {}
     out = []
-    if profile.get('slips_variant', 'none') != 'none':
+    is_sensor = profile.get('slips_variant', 'none') != 'none'
+    services = list(profile.get('services') or [])
+    if is_sensor:
         sv = profile['slips_variant']
         if sv in SLIPS_PROFILES:
             out.append(f'SLIPS_PROFILE={sv}')
         if peer_names:
             out.append(f"SLIPS_PEERS='{','.join(peer_names)}'")
-        if host.get('run_web'):
+        if 'apache' in services or host.get('run_web'):
+            # the slips image starts apache on :8000 when RUN_WEB=1
             out.append('RUN_WEB=1')
         targets = keepalive_targets(topology)
         if targets:
             out.append(f"KEEPALIVE_TARGETS='{' '.join(targets)}'")
         if gateway_ip:
             out.append(f'GATEWAY_IP={gateway_ip}')
-    if profile.get('services'):
-        out.append(f"SERVICES='{','.join(profile['services'])}'")
+        # 'apache' is realized via RUN_WEB, not the image-less service list.
+        services = [s for s in services if s != 'apache']
+    elif services:
+        # 'apache' only exists on the slips image; on a plain service host
+        # the same consolidated frontpage is served by the 'web' service.
+        services = list(dict.fromkeys('web' if s == 'apache' else s for s in services))
+    if services:
+        out.append(f"SERVICES='{','.join(services)}'")
     cron = [line for line in _connection_cron_lines(topology, profile) if line.strip()]
     if cron:
         out.append(f"EXTRA_CRON='{chr(10).join(cron)}'")
@@ -1626,10 +1649,6 @@ INDEX_HTML = r"""<!doctype html>
                   <span>Enable SSH on this host</span>
                 </label>
               </div>
-              ${profile.slips_variant !== 'none' ? `<div class="span-12"><label class="checkbox-line fed">
-                <input data-field="host.run_web" type="checkbox" ${host.run_web ? 'checked' : ''}>
-                <span>Serve web page on :8000 (apache, /var/www/slips_site)</span>
-              </label></div>` : ''}
               <div class="span-12 profile-box fed-box">
                 <h5>Machine profile (federation)</h5>
                 <div class="row">
@@ -2102,6 +2121,14 @@ INDEX_HTML = r"""<!doctype html>
         const result = await api(`api/topologies/${encodeURIComponent(id)}`);
         selectedId = result.topology.id;
         model = result.topology;
+        // Legacy migration: the sensor webpage used to be the host-level
+        // run_web flag; it now lives in the services tickbox ('apache').
+        (model.networks || []).forEach((net) => (net.hosts || []).forEach((host) => {
+          host.profile = host.profile || {};
+          host.profile.services = host.profile.services || [];
+          if (host.run_web && !host.profile.services.includes('apache'))
+            host.profile.services.push('apache');
+        }));
         setStatus(`Loaded ${model.name}.`);
         render();
       }
@@ -2588,6 +2615,10 @@ def validate_topology(topology):
                 host['repeats'] = 50
             host['run_web'] = bool(host.get('run_web'))
             host['profile'] = _normalize_profile(host.get('profile'))
+            # Legacy migration: the sensor webpage used to be the host-level
+            # run_web flag; it now lives in the services tickbox ('apache').
+            if host.get('run_web') and 'apache' not in host['profile']['services']:
+                host['profile']['services'].append('apache')
             # Selecting the "static attacker" type makes it a role=attacker node.
             if host.get('type') == 'static-attacker':
                 host['profile']['role'] = 'attacker'

@@ -72,7 +72,10 @@ def test_required_dom_ids_present():
 def test_new_host_fields_wired():
     assert 'data-field="host.repeats"' in app.INDEX_HTML  # repeats field (replaces +1)
     assert 'data-field="host.ssh_enabled"' in app.INDEX_HTML
-    assert 'data-field="host.run_web"' in app.INDEX_HTML
+    # the slips webpage is now the 'apache' service tickbox, not a separate
+    # host-level run_web checkbox
+    assert 'data-field="host.run_web"' not in app.INDEX_HTML
+    assert "__SERVICES__" in app.INDEX_HTML  # service registry (incl. apache) injected here
     assert "profile.connection_type" in app.INDEX_HTML   # unified connection rows
     assert "add-connection" in app.INDEX_HTML            # add connection from dropdown
     # free-form cron textarea removed (connections are the single source)

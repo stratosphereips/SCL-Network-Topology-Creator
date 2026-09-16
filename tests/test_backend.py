@@ -483,3 +483,129 @@ def test_repeats_default_to_1():
         {"id": "h", "name": "h1", "type": "normal-user"}]}]}
     valid = app.validate_topology(topology)
     assert valid["networks"][0]["hosts"][0]["repeats"] == 1
+
+
+# --------------------------------------------------------------------------
+# 'apache' service: the slips-image webpage as a services tickbox
+# --------------------------------------------------------------------------
+def _apache_topology():
+    return {
+        "name": "apache",
+        "networks": [{
+            "id": "n", "cidr": "10.77.1.0/24", "internet": True,
+            "hosts": [
+                {"id": "s1", "name": "sensor-apache", "type": "normal-user",
+                 "profile": {"slips_variant": "strong", "attacker_pivot": False,
+                             "services": ["apache"], "connections": []}},
+                {"id": "s2", "name": "sensor-plain", "type": "normal-user",
+                 "profile": {"slips_variant": "weak", "attacker_pivot": False,
+                             "services": [], "connections": []}},
+                {"id": "svc1", "name": "svc-both", "type": "normal-user",
+                 "profile": {"slips_variant": "none", "attacker_pivot": False,
+                             "services": ["snmp", "apache"], "connections": []}},
+                {"id": "svc2", "name": "svc-web", "type": "normal-user",
+                 "profile": {"slips_variant": "none", "attacker_pivot": False,
+                             "services": ["web"], "connections": []}},
+            ],
+        }],
+        "routers": [{"id": "r1", "name": "core"}],
+    }
+
+
+def _apache_valid():
+    valid = app.validate_topology(_apache_topology())
+    valid["id"] = "apache"
+    return valid
+
+
+def _host(valid, name):
+    return next(h for h in valid["networks"][0]["hosts"] if h["name"] == name)
+
+
+def test_apache_service_is_registered():
+    assert "apache" in app.SERVICES
+    assert app.SERVICES["apache"]["target_role"] == "web"
+    assert app.SERVICES["apache"]["label"] == "Apache webpage"
+
+
+def test_apache_on_sensor_becomes_run_web_and_no_services_line():
+    valid = _apache_valid()
+    host = _host(valid, "sensor-apache")
+    cfg = app.node_config(valid, host, host["profile"], ["sensor-apache", "sensor-plain"], "10.77.1.254")
+    assert "RUN_WEB=1" in cfg
+    assert "SERVICES='apache'" not in cfg
+    assert "SLIPS_PROFILE=strong" in cfg
+
+
+def test_sensor_without_apache_has_no_run_web():
+    valid = _apache_valid()
+    host = _host(valid, "sensor-plain")
+    cfg = app.node_config(valid, host, host["profile"], ["sensor-apache", "sensor-plain"], "10.77.1.254")
+    assert "RUN_WEB" not in cfg
+
+
+def test_apache_on_service_host_translates_to_web():
+    # 'apache' only exists on the slips image; on a service host it maps to
+    # 'web', which serves the same consolidated frontpage from /www.
+    valid = _apache_valid()
+    host = _host(valid, "svc-both")
+    cfg = app.node_config(valid, host, host["profile"], [])
+    assert "SERVICES='snmp,web'" in cfg
+    assert "apache" not in cfg
+
+
+def test_apache_web_dedupes_when_web_also_ticked():
+    topo = _apache_topology()
+    topo["networks"][0]["hosts"][3]["profile"]["services"] = ["web", "apache"]
+    valid = app.validate_topology(topo)
+    valid["id"] = "apache"
+    host = _host(valid, "svc-web")
+    cfg = app.node_config(valid, host, host["profile"], [])
+    assert "SERVICES='web'" in cfg
+    assert "apache" not in cfg
+
+
+def test_apache_sensors_join_keepalive_targets():
+    valid = _apache_valid()
+    targets = app.keepalive_targets(valid)
+    assert "http://sensor-apache:8000" in targets
+    assert "http://svc-web:8000" in targets
+    assert "http://svc-both:8000" in targets
+    # plain sensor never serves a page
+    assert "http://sensor-plain:8000" not in targets
+
+
+def test_web_internal_role_fallback_finds_apache_host():
+    # A web_internal connection with no explicit target falls back to a host
+    # providing the 'web' role — including an apache-ticked sensor.
+    topo = _apache_topology()
+    topo["networks"][0]["hosts"][1]["profile"]["connections"] = [
+        {"id": "web_internal", "target": "", "interval": "*/2 * * * *"}
+    ]
+    valid = app.validate_topology(topo)
+    host = valid["networks"][0]["hosts"][1]
+    cron = app._connection_cron_lines(valid, host["profile"])
+    assert cron == ["*/2 * * * * /scripts/curl-website.sh http://sensor-apache:8000"]
+
+
+def test_legacy_run_web_migrates_to_apache_service():
+    topo = _apache_topology()
+    topo["networks"][0]["hosts"][0]["run_web"] = True
+    topo["networks"][0]["hosts"][0]["profile"]["services"] = []
+    valid = app.validate_topology(topo)
+    host = _host(valid, "sensor-apache")
+    assert "apache" in host["profile"]["services"]
+    cfg = app.node_config(valid, host, host["profile"], ["sensor-apache"], "10.77.1.254")
+    assert "RUN_WEB=1" in cfg
+    assert "SERVICES='apache'" not in cfg
+
+
+def test_apache_sensor_with_repeats_serves_on_all_clones():
+    topo = _apache_topology()
+    topo["networks"][0]["hosts"][0]["repeats"] = 3
+    valid = app.validate_topology(topo)
+    valid["id"] = "apache"
+    comp = app.generate_compose(valid)
+    for cid in ("n-s1", "n-s1-2", "n-s1-3"):
+        ep = " ".join(comp["services"][cid]["entrypoint"])
+        assert "RUN_WEB=1" in ep, cid
