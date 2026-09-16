@@ -213,9 +213,16 @@ def test_service_dockers_serve_webpage_exactly_where_ticked(matrix_compose):
         out = _exec(container, "crontab -l 2>/dev/null | grep -c 'apt-get update'")
         return {"ok": out.stdout.strip() >= "1", "crontab": out.stdout}
 
+    def slips_running(container):
+        # pgrep prints PIDs only; the [.] trick avoids matching our own shell.
+        out = _exec(container, "pgrep -f 'slips[.]py -c' || true")
+        return {"ok": bool(out.stdout.strip())}
+
     checks = {
-        # sensor with apache tickbox serves the consolidated frontpage
-        "n-sa": lambda c: {"ok": web_served(c)["ok"] and apt_cron(c)["ok"]},
+        # sensor with apache tickbox serves the consolidated frontpage,
+        # has the baked apt cron, and actually runs SLIPS
+        "n-sa": lambda c: {"ok": web_served(c)["ok"] and apt_cron(c)["ok"]
+                           and slips_running(c)["ok"]},
         # plain sensor: webpage refused
         "n-sp": web_refused,
         # snmp alone: webpage refused (web is never bundled with snmp)

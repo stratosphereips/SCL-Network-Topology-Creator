@@ -252,9 +252,10 @@ def test_bake_one_container_verify_and_cleanup(og_topology, og_compose):
                 if expected not in cron.stdout:
                     out["missing_cron"] = expected
                     return out
-            # SLIPS process must be running
-            proc = _exec(container, "pgrep -f 'slips.py -c' || true")
-            if "slips.py" not in proc.stdout:
+            # SLIPS process must be running. pgrep prints PIDs only; use the
+            # [.] regex trick so the probe's own shell never self-matches.
+            proc = _exec(container, "pgrep -f 'slips[.]py -c' || true")
+            if not proc.stdout.strip():
                 out["slips"] = "not running"
                 return out
             out["ok"] = True
