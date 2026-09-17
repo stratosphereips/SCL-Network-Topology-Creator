@@ -385,6 +385,30 @@ def test_internal_target_repeats_group_fans_out():
     ]
 
 
+def test_invalid_interval_falls_back_to_default():
+    # A malformed interval (e.g. a 6-field typo from the UI) must never reach
+    # the crontab: it would make cron reject the whole file and kill the node.
+    topology = {
+        "name": "t",
+        "networks": [{
+            "id": "n", "cidr": "10.77.1.0/24", "internet": True,
+            "hosts": [
+                {"id": "s1", "name": "scanner", "type": "normal-user",
+                 "profile": {"slips_variant": "weak", "services": [],
+                             "connections": [{"id": "google", "interval": "*/3 * * * * *"},
+                                             {"id": "wikipedia", "interval": "garbage"}], "internal": []}},
+            ],
+        }],
+        "routers": [{"id": "r1", "name": "core"}],
+    }
+    valid = app.validate_topology(topology)
+    cron = app._connection_cron_lines(valid, valid["networks"][0]["hosts"][0]["profile"])
+    assert cron == ["*/7 * * * * /scripts/internet-traffic.sh google",
+                    "*/5 * * * * /scripts/internet-traffic.sh wikipedia"]
+    # and no 6-field schedule leaks through anywhere
+    assert not any(c.startswith("*/3 * * * * *") for c in cron)
+
+
 # --------------------------------------------------------------------------
 # Docker multiplication (repeats): specs -> compose + node.conf baking
 # --------------------------------------------------------------------------

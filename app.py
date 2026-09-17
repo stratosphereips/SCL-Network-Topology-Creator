@@ -382,6 +382,13 @@ def _connection_cron_lines(topology, profile):
             continue
         command = ct['command']
         interval = entry.get('interval') or ct.get('interval') or '* * * * *'
+        # Never emit a malformed crontab line: cron schedule fields must be
+        # exactly 5 tokens, otherwise `crontab -` rejects the whole file and
+        # the node's entrypoint dies (silently losing the host).
+        if len(interval.split()) != 5:
+            interval = ct.get('interval') or '* * * * *'
+            if len(interval.split()) != 5:
+                interval = '* * * * *'
         target_role = ct.get('target_role')
         if target_role:
             target = entry.get('target') or ''
