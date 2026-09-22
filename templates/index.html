@@ -1482,6 +1482,7 @@
               <button class="secondary" data-action="load-topology" data-id="${item.id}" ${busyTopologyId ? 'disabled' : ''}>Load</button>
               <button data-action="start-topology" data-id="${item.id}" ${busyTopologyId ? 'disabled' : ''}>${busyTopologyId === item.id && busyTopologyAction === 'Starting topology' ? 'Starting...' : 'Start'}</button>
               <button class="secondary" data-action="stop-topology" data-id="${item.id}" ${busyTopologyId ? 'disabled' : ''}>${busyTopologyId === item.id && busyTopologyAction === 'Stopping topology' ? 'Stopping...' : 'Stop'}</button>
+              <button class="danger" data-action="delete-topology" data-id="${item.id}" ${busyTopologyId ? 'disabled' : ''}>${busyTopologyId === item.id && busyTopologyAction === 'Deleting topology' ? 'Deleting...' : 'Delete'}</button>
             </div>
           </div>
         `).join('') : '<p class="muted">No saved topologies yet.</p>';
@@ -1533,6 +1534,27 @@
           const job = await api(`api/topologies/${encodeURIComponent(id)}/stop`, { method: 'POST', body: '{}' });
           await waitForJob(job.job_id, 'Stopping topology...');
           setStatus('Topology stopped. It is no longer running.');
+        } finally {
+          busyTopologyId = '';
+          busyTopologyAction = '';
+          await refreshSaved();
+        }
+      }
+
+      async function deleteTopology(id) {
+        if (busyTopologyId) return;
+        const topology = saved.find((item) => item.id === id);
+        const name = topology?.name || id;
+        if (!window.confirm(`Delete saved topology "${name}"? This cannot be undone.`)) return;
+
+        busyTopologyId = id;
+        busyTopologyAction = 'Deleting topology';
+        setStatus(`Deleting ${name}...`);
+        await refreshSaved();
+        try {
+          await api(`api/topologies/${encodeURIComponent(id)}`, { method: 'DELETE' });
+          if (selectedId === id) selectedId = null;
+          setStatus(`Deleted ${name}.`);
         } finally {
           busyTopologyId = '';
           busyTopologyAction = '';
@@ -1764,6 +1786,7 @@
           if (action === 'load-topology') return loadTopology(event.target.dataset.id);
           if (action === 'start-topology') return startTopology(event.target.dataset.id);
           if (action === 'stop-topology') return stopTopology(event.target.dataset.id);
+          if (action === 'delete-topology') return deleteTopology(event.target.dataset.id);
           if (action === 'toggle-firewall' || firewallEl) {
             const target = firewallEl || event.target;
             collect();
