@@ -3,6 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      network: host   # kilimanjaro: Docker build bridge cannot reach registries
     container_name: scl-network-topology
     ports:
       - "${TOPOLOGY_PORT:-9004}:9002"
@@ -11,7 +12,7 @@ services:
       # Mount the outputs dir read-only so resolve_run_id can stat
       # outputs/<run_id>/ for run-id uniqueness (no overwrite on re-run).
       - ${OUTPUTS_HOST_PATH:-/tmp/outputs}:${OUTPUTS_HOST_PATH:-/tmp/outputs}:rw
-      - ./data:/app/data
+      - /opt/Agents/stratocyberlab/plugins/SCL-Network-Topology-Creator/data:/app/data
       # Mount shared directory - use environment variable or default
       - ${SHARED_DIR:-./shared}:/app/shared:ro
       # Mount this plugin's OWN images dir (self-contained: the Dockerfiles + sources
@@ -19,7 +20,7 @@ services:
       # stratocyberlab-level images dir). Default ./images resolves on the host to
       # plugins/network-topology/images — the same files the container reads at /app/images.
       - ${IMAGES_DIR:-./images}:/app/images:ro
-      - ./.env:/app/.env:ro
+      - /opt/Agents/stratocyberlab/plugins/SCL-Network-Topology-Creator/.env:/app/.env:ro
       # Persistent home for the NSG observer source clone + change-detection
       # stamp, so `docker compose up` can refresh/rebuild observed images from
       # latest upstream without re-cloning from scratch every start.
