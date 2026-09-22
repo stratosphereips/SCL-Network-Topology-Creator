@@ -152,3 +152,24 @@ def test_save_topology_assigns_random_suffix_when_no_id():
     suffix = result["id"][len("test-lab-"):]
     assert len(suffix) == 6
     int(suffix, 16)  # six hex chars
+
+
+# --- delete_topology -------------------------------------------------------
+
+def test_delete_topology_removes_saved_directory():
+    saved = app.save_topology(copy.deepcopy(MINIMAL))
+    directory = app.topology_dir(saved["id"])
+    (directory / "extra-generated-file").write_text("generated", encoding="utf8")
+
+    assert app.delete_topology(saved["id"]) is True
+    assert not directory.exists()
+
+
+def test_delete_topology_returns_false_when_missing():
+    assert app.delete_topology("missing-topology") is False
+
+
+@pytest.mark.parametrize("topology_id", ["../outside", "nested/path", "", "."])
+def test_delete_topology_rejects_unsafe_id(topology_id):
+    with pytest.raises(ValueError, match="Invalid topology id"):
+        app.delete_topology(topology_id)
