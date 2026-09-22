@@ -1,0 +1,6 @@
+services:
+  network-topology:
+    build:
+      network: host   # kilimanjaro: build containers have no bridge egress
+    ports: !override
+      - "127.0.0.1:${TOPOLOGY_PORT:-9004}:9002"
