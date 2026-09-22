@@ -26,6 +26,14 @@ class TopologyHandler(BaseHTTPRequestHandler):
         except Exception as exc:
             self.send_json(500, {'error': str(exc)})
 
+    def do_DELETE(self):
+        try:
+            self.handle_delete()
+        except ValueError as exc:
+            self.send_json(400, {'error': str(exc)})
+        except Exception as exc:
+            self.send_json(500, {'error': str(exc)})
+
     def handle_get(self):
         parsed = urlsplit(self.path)
         path = parsed.path.rstrip('/') or '/'
@@ -107,6 +115,27 @@ class TopologyHandler(BaseHTTPRequestHandler):
             self.send_json(202, {'job_id': job_id})
             return
         self.send_json(404, {'error': 'Not found'})
+
+    def handle_delete(self):
+        parsed = urlsplit(self.path)
+        path = parsed.path.rstrip('/') or '/'
+        match = re.fullmatch(r'/api/topologies/([^/]+)', path)
+        if not match:
+            self.send_json(404, {'error': 'Not found'})
+            return
+
+        topology_id = unquote(match.group(1))
+        if not re.fullmatch(r'[a-z0-9][a-z0-9_-]*', topology_id):
+            self.send_json(400, {'error': 'Invalid topology id.'})
+            return
+        if not app.topology_path(topology_id).is_file():
+            self.send_json(404, {'error': 'Topology not found'})
+            return
+        if app.is_running(topology_id):
+            self.send_json(409, {'error': 'Stop the topology before deleting it.'})
+            return
+        app.delete_topology(topology_id)
+        self.send_json(200, {'deleted': topology_id})
 
     def read_body(self):
         length = int(self.headers.get('Content-Length') or '0')
