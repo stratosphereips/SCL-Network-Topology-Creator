@@ -21,6 +21,10 @@ COPY shared/ ./shared/
 COPY presets/ ./presets/
 COPY templates/ ./templates/
 COPY static/ ./static/
+# These are build contexts for topology host images. Baking them into the
+# control-plane image avoids host bind paths when the SCL dashboard invokes
+# Compose through its mounted /plugins directory.
+COPY images/ ./images/
 
 # Create data directory
 RUN mkdir -p /app/data/topologies
