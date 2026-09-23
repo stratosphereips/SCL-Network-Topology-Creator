@@ -3357,6 +3357,7 @@ def start_topology(topology_id, log_name=None):
         json.dump(compose, file, indent=2)
         file.write('\n')
     try:
+        detach_hackerlab_topology_networks()
         run_compose(topology_id, ['down'])
     except Exception:
         pass
@@ -3365,7 +3366,32 @@ def start_topology(topology_id, log_name=None):
     return {'status': 'started', 'log_dir': f'{EXPERIMENTS_ROOT}/{log_rel}'}
 
 
+def detach_hackerlab_topology_networks(topology_id=''):
+    """Disconnect the hackerlab from scl-topology networks.
+
+    `compose down` cannot remove a network while the hackerlab is still
+    attached, so stale networks (and their CIDRs) pile up across runs and a
+    later deploy on the same CIDR fails with 'Pool overlaps'. Detach first.
+    Limited to one topology's networks when topology_id is given."""
+    container_name = 'scl-hackerlab'
+    try:
+        net_map = docker_inspect_json(
+            ['inspect', '-f', '{{json .NetworkSettings.Networks}}', container_name]) or {}
+    except Exception:
+        return
+    for name in list(net_map.keys()):
+        if not name.startswith('scl-topology-'):
+            continue
+        if topology_id and topology_id.lower() not in name.lower():
+            continue
+        try:
+            docker_run(['network', 'disconnect', '-f', name, container_name])
+        except Exception:
+            pass
+
+
 def stop_topology(topology_id):
+    detach_hackerlab_topology_networks(topology_id)
     run_compose(topology_id, ['down'])
     return {'status': 'stopped'}
 
