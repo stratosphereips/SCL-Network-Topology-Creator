@@ -3,8 +3,7 @@
 # always from the LATEST upstream observer code.
 #
 # Each run refreshes a clone of stratosphereips/NSG-docker-state-creator
-# (NSG_SRC_DIR, default: /opt/Agents/NSG-docker-state-creator when /opt/Agents
-# exists, else ~/.local/share/nsg-docker-state-creator), then builds every
+# (NSG_SRC_DIR, default: ~/.local/share/nsg-docker-state-creator), then builds every
 # missing variant with THIS repo's images/nsg-observer/Dockerfile using the
 # fresh clone as build context (upstream supplies observer/ + examples/;
 # distro/SCL packaging lives in this repo — no patch re-application).
@@ -20,20 +19,12 @@
 #          `docker compose up` always ends with observed images built from
 #          the latest upstream observer code.
 #
-# Kilimanjaro (everything runs as the agent user, uid 1013):
-#   docker run --rm --network=host \
-#     -v /var/run/docker.sock:/var/run/docker.sock -v /opt/Agents:/opt/Agents \
-#     alpine sh -c 'apk add -q git docker-cli su-exec >/dev/null &&
-#       su-exec 1013:984 sh /opt/Agents/stratocyberlab/plugins/SCL-Network-Topology-Creator/images/nsg-observer/build-observed-images.sh'
-# (first use: chown -R 1013:1012 "$NSG_SRC_DIR" so the agent user can refresh it)
 set -eu
 
 REPO_DIR=$(cd "$(dirname "$0")/../.." && pwd)
 UPSTREAM=${NSG_UPSTREAM:-https://github.com/stratosphereips/NSG-docker-state-creator.git}
 if [ -n "${NSG_SRC_DIR:-}" ]; then
     SRC=$NSG_SRC_DIR
-elif [ -d /opt/Agents ]; then
-    SRC=/opt/Agents/NSG-docker-state-creator
 else
     SRC=$HOME/.local/share/nsg-docker-state-creator
 fi
