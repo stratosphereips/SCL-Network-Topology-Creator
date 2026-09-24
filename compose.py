@@ -35,6 +35,17 @@ def _observer_config(topology):
     return cfg if cfg.get('enabled') else None
 
 
+def _host_observation_enabled(host, observer_cfg):
+    """Return whether this host should use its NSG-observed image.
+
+    Missing host flags retain compatibility with topology files created before
+    per-host selection existed, where the global enabled switch meant all hosts.
+    """
+    if 'observation_enabled' in host:
+        return bool(host.get('observation_enabled'))
+    return bool(observer_cfg)
+
+
 # Base images that CANNOT carry the NSG observer, with the reason. The observer
 # scripts require Python >= 3.7; old bases (e.g. Ubuntu bionic = python 3.6)
 # can still be observed by building their -observed variant with the
@@ -557,10 +568,11 @@ def generate_compose(topology, opencode_images=None):
             # the (agent-adjusted) command with the original image entrypoint
             # and merge OBS_* env into the agent environment. Images in
             # OBSERVER_UNSUPPORTED_IMAGES stay unobserved (labelled).
-            if observer_cfg and _observer_supported(service_config['image']):
+            observe_host = _host_observation_enabled(host, observer_cfg)
+            if observer_cfg and observe_host and _observer_supported(service_config['image']):
                 _apply_observer(service_config, topology, run_id, service_name,
                                 observer_cfg, has_agents=host_has_agents)
-            elif observer_cfg:
+            elif observer_cfg and observe_host:
                 print(f"⚠️  NSG observer skipped for {service_name} "
                       f"({service_config['image']}): {OBSERVER_UNSUPPORTED_IMAGES[service_config['image']]}")
                 service_config.setdefault('labels', []).append('scl.role=observer-skipped')
