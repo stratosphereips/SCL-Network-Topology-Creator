@@ -154,6 +154,54 @@ def test_generate_compose_can_disable_coder56_verifier(rich_topology):
     assert 'DIRECT VALIDATION MODE (coder56 verifier disabled)' in service['command'][2]
 
 
+def test_generate_compose_observes_only_selected_hosts(make_topology):
+    spec = {
+        'name': 'Selective observation',
+        'monitoring': {
+            'nsg_observer': {'enabled': True, 'state_level': 'operational'},
+        },
+        'networks': [{
+            'id': 'net1', 'name': 'Net One', 'cidr': '10.77.1.0/24',
+            'hosts': [
+                {'id': 'observed', 'name': 'observed', 'type': 'normal-user',
+                 'observation_enabled': True},
+                {'id': 'plain', 'name': 'plain', 'type': 'normal-user',
+                 'observation_enabled': False},
+            ],
+        }],
+    }
+    out = app.generate_compose(make_topology(spec, topo_id='selective-observation'))
+
+    observed = out['services']['net1-observed']
+    plain = out['services']['net1-plain']
+    router = out['services']['router-router1']
+    assert '-observed:' in observed['image']
+    assert 'scl.role=observed' in observed['labels']
+    assert any(volume.endswith(':/observation') for volume in observed['volumes'])
+    assert plain['image'] == app.BASE_IMAGE
+    assert 'scl.role=observed' not in plain['labels']
+    assert '-observed:' in router['image']
+
+
+def test_legacy_global_observer_still_selects_every_host(make_topology):
+    spec = {
+        'name': 'Legacy observation',
+        'monitoring': {'nsg_observer': {'enabled': True}},
+        'networks': [{
+            'id': 'net1', 'name': 'Net One', 'cidr': '10.77.1.0/24',
+            'hosts': [
+                {'id': 'h1', 'name': 'host1', 'type': 'normal-user'},
+                {'id': 'h2', 'name': 'host2', 'type': 'normal-user'},
+            ],
+        }],
+    }
+    topology = make_topology(spec, topo_id='legacy-observation')
+    assert all(host['observation_enabled'] for host in topology['networks'][0]['hosts'])
+    out = app.generate_compose(topology)
+    assert '-observed:' in out['services']['net1-h1']['image']
+    assert '-observed:' in out['services']['net1-h2']['image']
+
+
 # ---------------------------------------------------------------------------
 # resolve_run_id
 # ---------------------------------------------------------------------------
