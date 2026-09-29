@@ -9,6 +9,12 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         nmap iproute2 iputils-ping curl openssh-client netcat-openbsd \
+        # hydra drives the SSH brute-forcing pass; nmap's ssh-brute NSE
+        # script is unusable here (libssh2 1.10 in Ubuntu 22.04 cannot
+        # complete a handshake with modern OpenSSH either way, NSE returns
+        # "Unable to complete libssh2 handshake"), so nmap does discovery
+        # and hydra does the actual brute attempts.
+        hydra \
     && mkdir -p /var/log/static_attacker \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*

