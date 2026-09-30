@@ -3145,6 +3145,35 @@ def generate_compose(topology, log_name=None):
     return compose
 
 
+def id_name_collision_warnings(topology):
+    """Warn when one host's id equals ANOTHER host's name.
+
+    Container names derive from host ids, while log mounts, profiles and
+    FL-peer roles follow host names. Ids are sticky by design (validate
+    preserves them), so renaming a host leaves its id behind; when the
+    stale id is itself the name of a sibling host, the containers swap
+    visible identities (a sensor's logs land under the attacker's name).
+    Deliberate non-name ids (s1, h1_9_xxxx) do not warn - only an id that
+    collides with a sibling host's name is reported.
+    """
+    warnings = []
+    names = set()
+    for net in topology.get('networks', []):
+        for host in net.get('hosts', []):
+            if host.get('name'):
+                names.add(host['name'])
+    for net in topology.get('networks', []):
+        for host in net.get('hosts', []):
+            hid = host.get('id')
+            if hid and hid in names and hid != host.get('name'):
+                warnings.append(
+                    f"host {host.get('name')!r} runs with id {hid!r}, which is "
+                    'also the name of another host (stale id from a rename; '
+                    'containers and log dirs will disagree)'
+                )
+    return warnings
+
+
 def save_topology(payload):
     topology = validate_topology(payload)
     topology_id = normalize_identifier(topology.get('id'), slugify(topology['name']))
@@ -3162,6 +3191,9 @@ def save_topology(payload):
         file.write('\n')
     if is_running(topology_id):
         sync_hackerlab_runtime(topology)
+    # Response-only: surface stale id/name collisions to the caller without
+    # persisting them (recomputed on every save).
+    topology['warnings'] = id_name_collision_warnings(topology)
     return topology
 
 

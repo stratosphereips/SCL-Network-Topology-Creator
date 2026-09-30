@@ -38,6 +38,39 @@ def _basic_topology():
 
 
 # --------------------------------------------------------------------------
+# id/name collision warnings (stale ids after host renames)
+# --------------------------------------------------------------------------
+def _collision_shape():
+    # the sw5 small-topology accident: middle sensor renamed to slips-strong
+    # (id kept), old strong sensor converted to the static attacker (id kept)
+    return {
+        "name": "Shifted", "networks": [{
+            "id": "net1", "name": "N", "cidr": "10.77.1.0/24",
+            "hosts": [
+                {"id": "slips-weak", "name": "slips-weak", "type": "normal-user",
+                 "profile": {"slips_variant": "weak", "services": [], "connections": [], "internal": []}},
+                {"id": "slips-middle", "name": "slips-strong", "type": "normal-user",
+                 "profile": {"slips_variant": "strong", "services": [], "connections": [], "internal": []}},
+                {"id": "slips-strong", "name": "static-attacker", "type": "static-attacker",
+                 "profile": {"services": [], "connections": [], "internal": []}},
+            ]}],
+        "routers": [{"id": "r1", "name": "core"}],
+    }
+
+
+def test_id_name_collision_warns_on_stale_rename_id():
+    topo = app.validate_topology(_collision_shape())
+    warnings = app.id_name_collision_warnings(topo)
+    assert len(warnings) == 1
+    assert "static-attacker" in warnings[0] and "slips-strong" in warnings[0]
+
+
+def test_id_name_collision_silent_for_deliberate_nonname_ids():
+    topo = app.validate_topology(_basic_topology())  # ids s1/s2/f1/n1, no collisions
+    assert app.id_name_collision_warnings(topo) == []
+
+
+# --------------------------------------------------------------------------
 # node_image / node_entrypoint — composed from the profile, not a type enum
 # --------------------------------------------------------------------------
 def test_node_image_sensor():
