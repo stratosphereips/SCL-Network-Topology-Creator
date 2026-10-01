@@ -24,6 +24,10 @@ INTERFACE=${INTERFACE:-eth0}
 SUBNET=${TARGET_SUBNET:-$(ip -o -4 addr show "$INTERFACE" 2>/dev/null | awk '{print $4}')}
 SUBNET=${SUBNET:-10.0.0.0/8}
 INTERVAL=${ATTACK_INTERVAL:-60}
+# Sweep breadth cap (per cycle): 1000-port sweeps drowned every labeling
+# window in attacker flows; 50 keeps evidence cadence at ~20x less volume.
+# MUST be assigned before any use (script runs with set -u).
+TOP_PORTS=${TOP_PORTS:-50}
 NOW=$(date -u +%Y%m%d_%H%M%S)
 LOG=/var/log/static_attacker/nmap_${NOW}.log
 : > "$LOG"
@@ -46,9 +50,6 @@ while true; do
   echo "===== $cycle sweep $SUBNET (nmap -sS -A, top ${TOP_PORTS} ports) =====" >> "$LOG"
   # aggressive SYN scan of the subnet: -A implies -sV/-O/script/traceroute;
   # -A is the mechanical part that feeds SLIPS's portscan/related alerts.
-  # TOP_PORTS caps the per-cycle flow volume (1000-port sweeps every 60s
-  # drowned every labeling window in attacker flows). Env-tunable.
-  TOP_PORTS=${TOP_PORTS:-50}
   nmap -sS -A -T4 \
     --top-ports "$TOP_PORTS" \
     --exclude 127.0.0.0/8,localhost \
