@@ -43,11 +43,14 @@ echo "[static-attacker] attack phase started — engaging" | tee -a "$LOG"
 
 while true; do
   cycle=$(date -u +%F\ %T)
-  echo "===== $cycle sweep $SUBNET (nmap -sS -A) =====" >> "$LOG"
+  echo "===== $cycle sweep $SUBNET (nmap -sS -A, top ${TOP_PORTS} ports) =====" >> "$LOG"
   # aggressive SYN scan of the subnet: -A implies -sV/-O/script/traceroute;
   # -A is the mechanical part that feeds SLIPS's portscan/related alerts.
+  # TOP_PORTS caps the per-cycle flow volume (1000-port sweeps every 60s
+  # drowned every labeling window in attacker flows). Env-tunable.
+  TOP_PORTS=${TOP_PORTS:-50}
   nmap -sS -A -T4 \
-    --top-ports 1000 \
+    --top-ports "$TOP_PORTS" \
     --exclude 127.0.0.0/8,localhost \
     "$SUBNET" >> "$LOG" 2>&1 || true
 
