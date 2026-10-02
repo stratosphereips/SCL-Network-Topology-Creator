@@ -158,6 +158,14 @@ Current state of the pieces (see `changes.md` for history):
   DNS P2P injection (`SLIPS_PEERS`), deployed end-to-end in a smoke test.
 - **SLIPS image**: baked variant configs (strong/middle/weak), dynamic
   `/dns4` P2P config; peers boot from a plugin-created topology.
+- **Variant definitions (Oct 2)**: the variants differ only in
+  `modules.disable`. Since Oct 2 the **strong variant enables
+  `network_discovery`** (the canonical horizontal/vertical portscan
+  detectors — the dense uid-citing evidence source our FL module's
+  flow-exact labeling needs); middle/weak keep it disabled so the
+  label-quality-vs-sensor-strength axis is measurable. Other differences:
+  `brute_force` and `anomaly_detection` live only on strong; `ml_online`
+  disabled on weak.
 - **Runner**: not yet consuming the topology manifest / emitting `manifest/`
   + `ip_assignment.json` into a per-run result dir.
 
