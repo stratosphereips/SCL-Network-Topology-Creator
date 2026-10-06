@@ -150,17 +150,17 @@ SLIPS_PROFILES = {
     'none': {'label': 'None', 'resources': {}, 'modules': []},
     'weak': {
         'label': 'Weak',
-        'resources': {'cpus': 1, 'mem': '2g'},
+        'resources': {'cpus': 4, 'mem': '4g'},  # equal for every variant: variants differ by detectors only
         'modules': ['connected_flows', 'timeline'],
     },
     'middle': {
         'label': 'Middle',
-        'resources': {'cpus': 2, 'mem': '4g'},
+        'resources': {'cpus': 4, 'mem': '4g'},  # equal for every variant: variants differ by detectors only
         'modules': ['connected_flows', 'timeline', 'ml_online'],
     },
     'strong': {
         'label': 'Strong',
-        'resources': {'cpus': 4, 'mem': '8g'},
+        'resources': {'cpus': 4, 'mem': '4g'},  # equal for every variant: variants differ by detectors only
         'modules': ['connected_flows', 'timeline', 'ml_online', 'brute_force'],
     },
 }

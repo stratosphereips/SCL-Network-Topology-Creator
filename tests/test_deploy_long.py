@@ -84,11 +84,11 @@ def test_compose_has_all_expected_services(og_compose):
 def test_compose_sensor_caps_and_resources(og_topology, og_compose):
     s1 = og_compose["services"]["fed-s1"]
     assert s1["cap_add"] == ["NET_ADMIN", "NET_RAW", "SYS_ADMIN"]
-    assert s1["cpus"] == 4 and s1["mem_limit"] == "8g"  # strong
+    assert s1["cpus"] == 4 and s1["mem_limit"] == "4g"  # strong
     s2 = og_compose["services"]["fed-s2"]
-    assert s2["cpus"] == 2 and s2["mem_limit"] == "4g"  # middle
+    assert s2["cpus"] == 4 and s2["mem_limit"] == "4g"  # middle
     s3 = og_compose["services"]["fed-s3"]
-    assert s3["cpus"] == 1 and s3["mem_limit"] == "2g"  # weak
+    assert s3["cpus"] == 4 and s3["mem_limit"] == "4g"  # weak
 
 
 # ---------------------------------------------------------------------------
@@ -155,8 +155,8 @@ def test_og_keepalive_targets_and_gateway(og_topology):
     assert "GATEWAY_IP=172.20.1.254" in cfg
 
 
-def test_served_webpages_identical_to_og():
-    # service /www is OG snmp/www/index.html; slips /var/www/slips_site is OG slips_site
+def test_served_webpages_identical_to_build_sources():
+    # images serve exactly the plugin's own federation/ build sources
     def image_web(image, path):
         return subprocess.run(
             ["docker", "run", "--rm", "--entrypoint", "sh", image, "-c", f"cat {path}"],
@@ -165,10 +165,10 @@ def test_served_webpages_identical_to_og():
 
     svc = image_web(app.SERVICE_RUNTIME_IMAGE, "/www/index.html")
     slips = image_web(app.SLIPS_RUNTIME_IMAGE, "/var/www/slips_site/index.html")
-    og_svc = open("/home/svobojan/thesis_project/snmp/www/index.html").read()
-    og_slips = open("/home/svobojan/thesis_project/slips/slips_site/index.html").read()
-    assert svc == og_svc, "service /www web page differs from OG"
-    assert slips == og_slips, "slips_site web page differs from OG"
+    src_svc = (app.BUILD_SOURCES / "snmp" / "www" / "index.html").read_text()
+    src_slips = (app.BUILD_SOURCES / "slips" / "slips_site" / "index.html").read_text()
+    assert svc == src_svc, "service /www web page differs from federation/ source"
+    assert slips == src_slips, "slips_site web page differs from federation/ source"
 
 
 # ---------------------------------------------------------------------------
@@ -306,4 +306,3 @@ def _exec(container, cmd):
         ["docker", "exec", container, "sh", "-lc", cmd],
         capture_output=True, text=True,
     )
-

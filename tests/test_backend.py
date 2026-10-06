@@ -264,9 +264,9 @@ def test_node_config_service_and_internal_target():
 
 def test_node_config_resources_capacity():
     s1 = _generate()["services"]["slip-net-s1"]
-    assert s1["cpus"] == 1 and s1["mem_limit"] == "2g"  # weak
+    assert s1["cpus"] == 4 and s1["mem_limit"] == "4g"  # weak
     s2 = _generate()["services"]["slip-net-s2"]
-    assert s2["cpus"] == 4 and s2["mem_limit"] == "8g"  # strong
+    assert s2["cpus"] == 4 and s2["mem_limit"] == "4g"  # strong (same as weak)
     assert s1["cap_add"] == ["NET_ADMIN", "NET_RAW", "SYS_ADMIN"]
 
 
