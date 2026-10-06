@@ -11,7 +11,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib import error as urllib_error
 from urllib import request as urllib_request
-from urllib.parse import unquote, urlsplit
+from urllib.parse import quote, unquote, urlsplit
 
 HOST = '0.0.0.0'
 PORT = 9002
@@ -3217,9 +3217,18 @@ def docker_command():
 # Managed federation runtime images that can be built from mounted build sources.
 FEDERATION_IMAGES = ['federation_network-slips', 'federation_network-service',
                      'federation_network-attacker']
-# Host directory (mounted into the control plane) that contains the SLIPS/runner
-# project whose Dockerfiles build the federation_network-* images.
-BUILD_SOURCES = Path(os.environ.get('FEDERATION_BUILD_SOURCES', '/srv/federation-build'))
+# Build sources for the federation_network-* images live in THIS plugin
+# (federation/: service + SLIPS overlay Dockerfiles, entrypoints, scripts,
+# detector configs). FEDERATION_BUILD_SOURCES overrides it for development.
+BUILD_SOURCES = Path(os.environ.get(
+    'FEDERATION_BUILD_SOURCES', str(Path(__file__).resolve().parent / 'federation')))
+# SLIPS itself is never copied in: the peer image is built from this repo's
+# branch with the branch's own docker/Dockerfile, then the federation layer
+# (federation/slips/Dockerfile) goes on top.
+SLIPS_REPO = os.environ.get('SLIPS_REPO', 'https://github.com/stratosphereips/StratosphereLinuxIPS.git')
+SLIPS_BRANCH = os.environ.get('SLIPS_BRANCH', 'fl_module_jan_rebased')
+SLIPS_BASE_IMAGE = 'federation_network-slips-base'
+SLIPS_COMMIT_LABEL = 'org.stratosphere.slips.commit'
 
 # Host base directory for live SLIPS runtime logs, written in real time by
 # bind-mounting each peer's /var/log/slips + /var/log/slips_output. The per-run
@@ -3270,6 +3279,70 @@ def federation_images_status():
     return {name: name in have for name in FEDERATION_IMAGES}
 
 
+def slips_image_commit(image=SLIPS_RUNTIME_IMAGE):
+    """SLIPS commit baked into a peer image ('' when unlabeled/missing)."""
+    result = subprocess.run(
+        ['docker', 'image', 'inspect', '-f',
+         '{{index .Config.Labels "' + SLIPS_COMMIT_LABEL + '"}}', image],
+        capture_output=True, text=True, timeout=30,
+    )
+    value = (result.stdout or '').strip() if result.returncode == 0 else ''
+    return '' if value in ('', '<no value>') else value
+
+
+def resolve_slips_commit(ref, repo=SLIPS_REPO):
+    """Resolve a branch/tag/sha of the SLIPS GitHub repo to a full commit sha.
+
+    Pinning the exact sha keeps image builds reproducible and stops the
+    docker layer cache from silently reusing an older checkout of a moving
+    branch.
+    """
+    if re.fullmatch(r'[0-9a-f]{40}', ref or ''):
+        return ref
+    match = re.search(r'github\.com[:/]([^/]+)/([^/]+?)(?:\.git)?$', repo)
+    if not match:
+        raise RuntimeError(f'cannot resolve {ref!r}: {repo} is not a GitHub repo')
+    url = f'https://api.github.com/repos/{match.group(1)}/{match.group(2)}/commits/{quote(ref, safe="")}'
+    request = urllib_request.Request(url, headers={'Accept': 'application/vnd.github+json'})
+    with urllib_request.urlopen(request, timeout=30) as response:
+        return json.load(response)['sha']
+
+
+def _docker_build_slips(branch, ref=None):
+    """Build the SLIPS peer image for one exact commit of the SLIPS repo.
+
+    1. base: the commit's own docker/Dockerfile, built from the git URL
+       (reused when that commit was built before);
+    2. federation layer: federation/slips/Dockerfile on top of the base.
+    Returns the commit sha.
+    """
+    sha = resolve_slips_commit(ref or branch)
+    base_tag = f'{SLIPS_BASE_IMAGE}:{sha[:12]}'
+    have_base = subprocess.run(['docker', 'image', 'inspect', base_tag],
+                               capture_output=True, text=True, timeout=30).returncode == 0
+    if not have_base:
+        result = subprocess.run(
+            ['docker', 'build', '-f', 'docker/Dockerfile',
+             '--build-arg', f'SLIPS_GIT_REF={sha}', '-t', base_tag, f'{SLIPS_REPO}#{sha}'],
+            capture_output=True, text=True, timeout=7200,
+        )
+        if result.returncode != 0:
+            raise RuntimeError('slips base build failed: ' + (result.stderr or result.stdout)[-2000:])
+    result = subprocess.run(
+        ['docker', 'build', '-f', str(BUILD_SOURCES / 'slips' / 'Dockerfile'),
+         '--build-arg', f'BASE_IMAGE={base_tag}',
+         '--build-arg', f'SLIPS_COMMIT={sha}',
+         '--build-arg', f'SLIPS_BRANCH={branch}',
+         '-t', 'scl-custom_challenge-slips', str(BUILD_SOURCES)],
+        capture_output=True, text=True, timeout=3600,
+    )
+    if result.returncode != 0:
+        raise RuntimeError('slips federation layer build failed: ' + (result.stderr or result.stdout)[-2000:])
+    subprocess.run(['docker', 'tag', 'scl-custom_challenge-slips', SLIPS_RUNTIME_IMAGE],
+                   capture_output=True, text=True, timeout=60)
+    return sha
+
+
 def _docker_build(tag, dockerfile):
     result = subprocess.run(
         ['docker', 'build', '-f', dockerfile, '-t', tag, str(BUILD_SOURCES)],
@@ -3280,11 +3353,12 @@ def _docker_build(tag, dockerfile):
     return tag
 
 
-def build_federation_images():
-    """Build + tag the federation_network-* images from mounted BUILD_SOURCES.
+def build_federation_images(slips_branch=None, slips_ref=None):
+    """Build + tag the federation_network-* images from BUILD_SOURCES.
 
-    Falls back to building just what's available; raises if none of the build
-    sources are mounted.
+    The SLIPS peer image is built from SLIPS_REPO at `slips_ref` (a commit
+    sha) or the head of `slips_branch` (default SLIPS_BRANCH). Falls back to
+    building just what's available; raises if nothing could be built.
     """
     if not BUILD_SOURCES.is_dir():
         raise RuntimeError(f'Build sources not mounted at {BUILD_SOURCES}')
@@ -3295,14 +3369,13 @@ def build_federation_images():
         log.append('federation_network-service: built')
     else:
         log.append('federation_network-service: no build source (service/Dockerfile missing)')
-    if (BUILD_SOURCES / 'slips' / 'slips.Dockerfile').exists():
-        log.append(_docker_build('scl-custom_challenge-slips',
-                                 str(BUILD_SOURCES / 'slips' / 'slips.Dockerfile')))
-        subprocess.run(['docker', 'tag', 'scl-custom_challenge-slips', 'federation_network-slips:latest'],
-                       capture_output=True, text=True, timeout=60)
-        log.append('federation_network-slips: built')
+    slips_commit = ''
+    if (BUILD_SOURCES / 'slips' / 'Dockerfile').exists():
+        branch = slips_branch or SLIPS_BRANCH
+        slips_commit = _docker_build_slips(branch, slips_ref)
+        log.append(f'federation_network-slips: built from {branch} @ {slips_commit}')
     else:
-        log.append('federation_network-slips: no build source (slips/slips.Dockerfile missing)')
+        log.append('federation_network-slips: no build source (slips/Dockerfile missing)')
     if (BUILD_SOURCES / 'attacker-static' / 'Dockerfile').exists():
         log.append(_docker_build('federation_network-attacker:latest',
                                  str(BUILD_SOURCES / 'attacker-static' / 'Dockerfile')))
@@ -3325,7 +3398,7 @@ def build_federation_images():
             log.append('federation_network-attacker: no Dockerfile (topology plugin attacker/ missing)')
     if not any('built' in line for line in log):
         raise RuntimeError(f'No build sources found under {BUILD_SOURCES}')
-    return {'built': federation_images_status(), 'log': log}
+    return {'built': federation_images_status(), 'slips_commit': slips_commit, 'log': log}
 
 
 def ensure_base_image():
@@ -3597,7 +3670,8 @@ class TopologyHandler(BaseHTTPRequestHandler):
             self.send_json(200, {'topologies': list_topologies()})
             return
         if path == '/api/images':
-            self.send_json(200, {'images': federation_images_status()})
+            self.send_json(200, {'images': federation_images_status(),
+                                 'slips_commit': slips_image_commit()})
             return
         match = re.fullmatch(r'/api/jobs/([^/]+)', path)
         if match:
@@ -3626,7 +3700,9 @@ class TopologyHandler(BaseHTTPRequestHandler):
             self.send_json(200, {'topology': topology})
             return
         if path == '/api/images/build':
-            job_id = start_job(build_federation_images)
+            body = self.read_body() or {}
+            job_id = start_job(lambda: build_federation_images(
+                slips_branch=body.get('slips_branch'), slips_ref=body.get('slips_ref')))
             self.send_json(202, {'job_id': job_id})
             return
         if path == '/api/generate-data':

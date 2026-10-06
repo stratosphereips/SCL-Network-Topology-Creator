@@ -1,0 +1,36 @@
+{
+  "services": {
+    "ftp": {
+      "label": "FTP server",
+      "target_role": "ftp",
+      "ports": ["20/tcp", "21/tcp"],
+      "packages": ["vsftpd"],
+      "files": { "ftp/vsftpd.conf": "/etc/vsftpd.conf" },
+      "start": "/usr/sbin/vsftpd /etc/vsftpd.conf &"
+    },
+    "snmp": {
+      "label": "SNMP",
+      "target_role": "snmp",
+      "ports": ["161/udp", "162/udp"],
+      "packages": ["snmp", "snmpd", "snmptrapd"],
+      "files": { "snmp/snmpd.conf": "/etc/snmp/snmpd.conf" },
+      "start": "/usr/sbin/snmpd -f -Lo & /usr/sbin/snmptrapd -f -Lo &"
+    },
+    "web": {
+      "label": "Web server",
+      "target_role": "web",
+      "ports": ["8000/tcp"],
+      "packages": ["python3"],
+      "files": { "snmp/www": "/www" },
+      "start": "(cd /www && exec python3 -m http.server 8000) &"
+    },
+    "sqlite": {
+      "label": "SQLite DB",
+      "target_role": "sqlite",
+      "ports": ["8010/tcp"],
+      "packages": ["python3"],
+      "files": { "sqlite/companies.db": "/srv/db/companies.db" },
+      "start": "(cd /srv/db && exec python3 -m http.server 8010) &"
+    }
+  }
+}

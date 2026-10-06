@@ -73,6 +73,8 @@ and the federation images from the mounted build source. Full runbook: the Exper
 Generated topologies use one or more router containers. Root routers connect to `playground-net`, child routers connect to their parent through transit networks, and assigned networks hang off the router you choose. Network segments are configured as Docker bridge networks with deterministic `10.77.<n>.0/24` subnets. Hosts are Ubuntu containers with role labels and startup scripts.
 
 The first version intentionally starts with Ubuntu-only hosts. Service roles prepare directories, users, and role-specific files; lightweight package-backed services are attempted when a segment has internet access.
+
+Egress: topology networks are docker-`internal` (no docker gateway). Every host routes through the topology router (generic hosts via their startup script, SLIPS/service nodes via `GATEWAY_IP` in node.conf), and the root router NATs networks with internet access to `playground-net`. Hosts on such networks get explicit resolvers (`SIM_DNS`, default `8.8.8.8,1.1.1.1`): docker's embedded DNS keeps answering container names and forwards outside names to them.
 If SSH is enabled for a host, the generated container creates the specified SSH user and starts `sshd`.
 If you select a hackerlab network, the plugin adds the `scl-hackerlab` container to that network with a deterministic `.2` address.
 
@@ -119,12 +121,21 @@ docker compose ps                      # control-plane "Up"
 
 The `federation_network-slips` / `federation_network-service` images are required only when you **Start** a topology that has slips/service nodes. Build them:
 
-- **From the UI:** press **Build images** (mount the SLIPS/runner project into the container first):
-  ```bash
-  FEDERATION_BUILD_SOURCES=/path/to/thesis_project docker compose up -d --build
-  # then click "Build images" in the UI (or POST /api/images/build)
-  ```
-- **Or manually:** `./build-images.sh /path/to/thesis_project`
+- **From the UI:** press **Build images**, or `POST /api/images/build` with an
+  optional body `{"slips_branch": "...", "slips_ref": "<sha>"}`.
+- **Or manually:** `./build-images.sh [slips_branch_or_sha]`
+
+All build sources ship with this plugin under `federation/` (service image,
+SLIPS federation layer, entrypoints, traffic scripts, detector configs). The
+SLIPS peer image is built from `SLIPS_REPO` (default: the official GitHub
+repo) at one exact commit — the head of `SLIPS_BRANCH`
+(`fl_module_jan_rebased`) unless a sha is given — using that commit's own
+`docker/Dockerfile`; `federation/slips/Dockerfile` then adds the lab layer and
+renders the strong/middle/weak configs from the commit's own
+`config/slips.yaml` + `federation/slips/configs/{overrides,variants}.yaml`.
+No SLIPS source is patched in: SLIPS/module changes live in the SLIPS branch,
+get pushed, then rebuilt. The image carries the commit as label
+`org.stratosphere.slips.commit` (`GET /api/images` reports it).
 
 The topologies (networks, nodes, profiles, firewall) need no images — you can design + save them before/without any build.
 

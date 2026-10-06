@@ -1,0 +1,35 @@
+# Detector variants: the ONLY difference between strong/middle/weak peers is
+# which SLIPS modules are disabled. Names follow SLIPS matching (lowercase,
+# '_'/'-'/' ' stripped, substring of the module path), so 'brute_force'
+# disables brute_force_detector. render_configs.py rejects names that match
+# no module, and any name that would disable the federated module.
+default: strong
+
+variants:
+  strong:
+    - template
+    - exporting_alerts
+    - blocking
+    - leak_detector
+    - cyst
+    - arp_poisoner
+  middle:
+    - template
+    - exporting_alerts
+    - blocking
+    - leak_detector
+    - cyst
+    - brute_force
+    - anomaly_detection
+    - arp_poisoner
+  weak:
+    - template
+    - exporting_alerts
+    - blocking
+    - leak_detector
+    - cyst
+    - brute_force
+    - anomaly_detection
+    - network_discovery
+    - arp_poisoner
+    - ml_online

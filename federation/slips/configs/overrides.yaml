@@ -1,0 +1,31 @@
+# Federation deltas applied on top of the SLIPS branch's own config/slips.yaml
+# (the base is never edited). Shared by every detector variant; variants
+# differ only in modules.disable (variants.yaml). Keep this minimal: a key
+# belongs here only if some code reads it and we need a non-default value.
+# Sections must exist in the base; keys must exist in the base unless the
+# section is module-owned (render_configs.MODULE_OWNED_SECTIONS).
+
+parameters:
+  # SLIPS time window (alert economics: one alert per profile/threat/bucket
+  # per TW).
+  time_window_width: 7200
+
+detection:
+  # Live alert gate (RATL = ATL x risk weight). Equals the current upstream
+  # default; pinned explicitly so an upstream change cannot silently shift
+  # the experiments. The runner may patch it per run.
+  risk_accumulated_threat_level: 5
+
+local_p2p:
+  use_p2p: true
+  create_p2p_logfile: true
+
+federated_network_module:
+  # 5-minute training windows (the module's "small window")
+  time_window_width: 300
+  train_from_scratch: true
+  training_batch_size: 50
+  min_training_samples: 30
+  # patched per run by the runner (fl_model_class / fl_merge_rule)
+  model_class: random_projection_mlp
+  merge_rule: average
