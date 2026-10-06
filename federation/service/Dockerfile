@@ -12,6 +12,7 @@ RUN apt-get update \
         snmptrapd \
         python3 \
         openssh-server \
+        ca-certificates \
         curl \
         iproute2 \
         wget \
