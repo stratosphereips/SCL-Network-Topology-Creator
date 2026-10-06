@@ -408,6 +408,13 @@ def _connection_cron_lines(topology, profile):
 # bash-sourcable file (node.conf) into the container at boot (via its
 # entrypoint) — no per-node environment variables, no host bind-mounts.
 NODE_CONFIG_PATH = '/opt/network-setup/node.conf'
+# Resolvers for hosts on internet-enabled networks. The sim networks are
+# docker-internal, where docker's embedded DNS answers container names but
+# never forwards outside names; with explicit `dns:` it forwards them to
+# these servers (reached through the topology router's NAT) while container
+# names keep resolving. Public resolvers on purpose: the pivot firewall
+# blocks the local campus range.
+SIM_DNS = [x.strip() for x in os.environ.get('SIM_DNS', '8.8.8.8,1.1.1.1').split(',') if x.strip()]
 
 
 def keepalive_targets(topology):
@@ -451,8 +458,6 @@ def node_config(topology, host, profile, peer_names, gateway_ip=''):
         targets = keepalive_targets(topology)
         if targets:
             out.append(f"KEEPALIVE_TARGETS='{' '.join(targets)}'")
-        if gateway_ip:
-            out.append(f'GATEWAY_IP={gateway_ip}')
         # 'apache' is realized via RUN_WEB, not the image-less service list.
         services = [s for s in services if s != 'apache']
     elif services:
@@ -461,6 +466,10 @@ def node_config(topology, host, profile, peer_names, gateway_ip=''):
         services = list(dict.fromkeys('web' if s == 'apache' else s for s in services))
     if services:
         out.append(f"SERVICES='{','.join(services)}'")
+    if gateway_ip:
+        # every managed node routes via the topology router (its entrypoint
+        # sets the default route; the sim networks are docker-internal)
+        out.append(f'GATEWAY_IP={gateway_ip}')
     cron = [line for line in _connection_cron_lines(topology, profile) if line.strip()]
     if cron:
         out.append(f"EXTRA_CRON='{chr(10).join(cron)}'")
@@ -2915,9 +2924,9 @@ def router_script(topology, router, descendant_networks, child_routes, transit_s
     if is_root:
         for network in descendant_networks:
             if network.get('internet'):
-                forward_rules.append(f"ip saddr {network['cidr']} oifname \"$$wan_if\" accept")
+                forward_rules.append(f"ip saddr {network['cidr']} oifname \"$wan_if\" accept")
         for subnet in transit_subnets:
-            forward_rules.append(f"ip saddr {subnet} oifname \"$$wan_if\" accept")
+            forward_rules.append(f"ip saddr {subnet} oifname \"$wan_if\" accept")
     for source in topology.get('networks', []):
         for dest in topology.get('networks', []):
             if source['id'] == dest['id']:
@@ -2940,7 +2949,7 @@ def router_script(topology, router, descendant_networks, child_routes, transit_s
 table ip nat {
   chain postrouting {
     type nat hook postrouting priority srcnat; policy accept;
-    oifname "$$wan_if" masquerade
+    oifname "$wan_if" masquerade
   }
 }
 """ if is_root else ''
@@ -2950,7 +2959,7 @@ sysctl -w net.ipv4.conf.all.rp_filter=0 || true
 sysctl -w net.ipv4.conf.default.rp_filter=0 || true
 {route_block}
 {router_management_block(router)}
-wan_if="$(ip route show default | awk '{{print $$5; exit}}')"
+wan_if="$(ip route show default | awk '{{print $5; exit}}')"
 cat > /tmp/router-rules.nft <<EOF
 flush ruleset
 table inet filter {{
@@ -3109,6 +3118,8 @@ def generate_compose(topology, log_name=None):
                     f'scl.host_type={"sensor" if is_sensor else ("service" if managed else host.get("type", "host"))}',
                 ],
             }
+            if network.get('internet') and SIM_DNS:
+                svc['dns'] = list(SIM_DNS)
             # SLIPS capacity from the selected variant (strong/middle/weak).
             if is_sensor:
                 resources = SLIPS_PROFILES.get(profile.get('slips_variant', 'none'), {}).get('resources') or {}

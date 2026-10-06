@@ -666,3 +666,51 @@ def test_apache_sensor_with_repeats_serves_on_all_clones():
     for cid in ("n-s1", "n-s1-2", "n-s1-3"):
         ep = " ".join(comp["services"][cid]["entrypoint"])
         assert "RUN_WEB=1" in ep, cid
+
+
+# --------------------------------------------------------------------------
+# egress: router NAT survives compose escaping, DNS + gateway on managed nodes
+# --------------------------------------------------------------------------
+def _internet_compose(internet=True):
+    topo = _basic_topology()
+    topo["networks"][0]["internet"] = internet
+    valid = app.validate_topology(topo)
+    valid["id"] = "egress"
+    return app.generate_compose(valid)
+
+
+def _compose_interpolate(text):
+    # docker compose turns the '$$' escape back into one literal '$'
+    return text.replace("$$", "$")
+
+
+def test_router_nat_rules_survive_compose_escaping():
+    # Regression (Sep 4 - Oct 6): the router script was escaped twice, so
+    # the shell saw '$$wan_if' (PID + 'wan_if') and every forward/NAT rule
+    # named a nonexistent interface -> no egress anywhere.
+    router = _internet_compose()["services"]["router-r1"]
+    script = _compose_interpolate(router["command"][-1])
+    assert 'oifname "$wan_if" accept' in script
+    assert 'oifname "$wan_if" masquerade' in script
+    assert "awk '{print $5; exit}'" in script
+    assert "$$" not in script
+
+
+def test_internet_network_hosts_get_dns_resolvers():
+    comp = _internet_compose(internet=True)
+    for name in ("slip-net-s1", "slip-net-s2", "slip-net-f1", "slip-net-n1"):
+        assert comp["services"][name]["dns"] == app.SIM_DNS
+
+
+def test_isolated_network_hosts_get_no_dns_override():
+    comp = _internet_compose(internet=False)
+    for name in ("slip-net-s1", "slip-net-f1"):
+        assert "dns" not in comp["services"][name]
+
+
+@pytest.mark.parametrize("host_id", ["s1", "f1"])
+def test_node_config_gateway_for_sensors_and_services(host_id):
+    valid = app.validate_topology(_basic_topology())
+    host = next(h for h in valid["networks"][0]["hosts"] if h["id"] == host_id)
+    cfg = app.node_config(valid, host, host["profile"], ["slips-1"], "10.77.1.254")
+    assert "GATEWAY_IP=10.77.1.254" in cfg
