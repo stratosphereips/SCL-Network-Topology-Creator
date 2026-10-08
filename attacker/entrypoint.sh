@@ -16,8 +16,6 @@
 #
 # Targets: derived from the container's own interface (no hardcoded IPs);
 # override with TARGET_SUBNET. Cadence tunables: ATTACK_INTERVAL.
-# Scans run at the IP layer (no ARP) so the sensors see conn flows, not ARP
-# records; override NO_ARP="" to restore nmap's default local-segment ARP.
 
 set -u
 
@@ -30,14 +28,6 @@ INTERVAL=${ATTACK_INTERVAL:-60}
 # window in attacker flows; 50 keeps evidence cadence at ~20x less volume.
 # MUST be assigned before any use (script runs with set -u).
 TOP_PORTS=${TOP_PORTS:-50}
-# IP-level scanning on the local segment. By default nmap on a same-subnet
-# target does ARP host-discovery and resolves MACs via ARP, so the sensors
-# see thousands of ARP records instead of conn flows. --disable-arp-ping
-# uses ICMP/TCP for discovery; --send-ip forces IP-layer probe packets, so
-# the scan surfaces as conn-flow evidence (portscan/related) the FL module
-# actually ingests, not ARP-scan evidence it drops. Override NO_ARP="" to
-# restore nmap's default ARP behaviour.
-NO_ARP=${NO_ARP:---disable-arp-ping --send-ip}
 NOW=$(date -u +%Y%m%d_%H%M%S)
 LOG=/var/log/static_attacker/nmap_${NOW}.log
 : > "$LOG"
@@ -57,11 +47,10 @@ echo "[static-attacker] attack phase started — engaging" | tee -a "$LOG"
 
 while true; do
   cycle=$(date -u +%F\ %T)
-  echo "===== $cycle sweep $SUBNET (nmap -sS -A, top ${TOP_PORTS} ports, IP-level) =====" >> "$LOG"
+  echo "===== $cycle sweep $SUBNET (nmap -sS -A, top ${TOP_PORTS} ports) =====" >> "$LOG"
   # aggressive SYN scan of the subnet: -A implies -sV/-O/script/traceroute;
   # -A is the mechanical part that feeds SLIPS's portscan/related alerts.
-  # $NO_ARP keeps discovery and probes at the IP layer (conn flows, not ARP).
-  nmap -sS -A -T4 $NO_ARP \
+  nmap -sS -A -T4 \
     --top-ports "$TOP_PORTS" \
     --exclude 127.0.0.0/8,localhost \
     "$SUBNET" >> "$LOG" 2>&1 || true
@@ -71,7 +60,7 @@ while true; do
   # with the same curated lists. nmap's ssh-brute NSE script can't be used in
   # this image (libssh2-utility handshake error against OpenSSH >=8.9), so
   # hydra stands in while nmap keeps the discovery/drive responsibility.
-  nmap -sS -T4 $NO_ARP -p 22 --open -oG - \
+  nmap -sS -T4 -p 22 --open -oG - \
     --exclude 127.0.0.0/8,localhost \
     "$SUBNET" 2>/dev/null | awk '/22\/open/ {print $2}' > /tmp/ssh_targets.txt
   if [ -s /tmp/ssh_targets.txt ]; then
