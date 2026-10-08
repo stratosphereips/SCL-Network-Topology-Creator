@@ -17,6 +17,10 @@ HOST = '0.0.0.0'
 PORT = 9002
 DATA_DIR = Path(os.environ.get('TOPOLOGY_DATA_DIR', '/app/data'))
 TOPOLOGIES_DIR = DATA_DIR / 'topologies'
+# Topologies committed to this repo, seeded into the data volume on
+# startup so teammates get them from the branch (absent-only; never
+# overwrites a volume copy).
+BUNDLED_TOPOLOGIES_DIR = Path(__file__).resolve().parent / 'topologies'
 BASE_IMAGE = 'scl-plugin-network-topology-ubuntu:0.1'
 LLM_URL = os.environ.get('DASHBOARD_LLM_URL', 'http://dashboard/api/llm/chat')
 SERVER = None
@@ -3197,6 +3201,42 @@ def id_name_collision_warnings(topology):
     return warnings
 
 
+def _write_inventory(topology_id, topology):
+    """(Re)write topologies/<id>/inventory.md from the topology dict."""
+    try:
+        from make_inventory import inventory_markdown
+        md = inventory_markdown(topology, CONNECTION_TYPES, SERVICES)
+        (topology_path(topology_id).parent / 'inventory.md').write_text(md)
+    except Exception as exc:  # inventory is a convenience, never fatal
+        print(f'inventory generation failed for {topology_id}: {exc}')
+
+
+def seed_topologies():
+    """Load repo-bundled topologies into the data volume when absent.
+
+    Absent-only: an id already present in the volume (incl. local edits) is
+    left untouched. Writes topology.json, its compose, and inventory.md.
+    """
+    if not BUNDLED_TOPOLOGIES_DIR.is_dir():
+        return
+    for bundled in sorted(BUNDLED_TOPOLOGIES_DIR.glob('*/topology.json')):
+        try:
+            topology = read_json(bundled)
+            topology_id = topology.get('id') or bundled.parent.name
+            if topology_path(topology_id).exists():
+                continue  # already in the volume; do not overwrite
+            topology['created_at'] = topology.get('created_at') or now_ts()
+            topology['updated_at'] = now_ts()
+            write_json(topology_path(topology_id), topology)
+            _write_inventory(topology_id, topology)
+            with open(compose_path(topology_id), 'w', encoding='utf8') as fh:
+                json.dump(generate_compose(topology), fh, indent=2)
+                fh.write('\n')
+            print(f'seeded topology {topology_id} from bundle')
+        except Exception as exc:
+            print(f'failed to seed {bundled}: {exc}')
+
+
 def save_topology(payload):
     topology = validate_topology(payload)
     topology_id = normalize_identifier(topology.get('id'), slugify(topology['name']))
@@ -3208,6 +3248,7 @@ def save_topology(payload):
     topology['created_at'] = existing.get('created_at') or now_ts()
     topology['updated_at'] = now_ts()
     write_json(existing_path, topology)
+    _write_inventory(topology_id, topology)
     compose = generate_compose(topology)
     with open(compose_path(topology_id), 'w', encoding='utf8') as file:
         json.dump(compose, file, indent=2)
@@ -3772,6 +3813,7 @@ def handle_shutdown(signum, _frame):
 
 if __name__ == '__main__':
     TOPOLOGIES_DIR.mkdir(parents=True, exist_ok=True)
+    seed_topologies()
     SERVER = ThreadingHTTPServer((HOST, PORT), TopologyHandler)
     signal.signal(signal.SIGINT, handle_shutdown)
     signal.signal(signal.SIGTERM, handle_shutdown)

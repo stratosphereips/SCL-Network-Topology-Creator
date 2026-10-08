@@ -1,0 +1,299 @@
+{
+  "created_at": "2026-09-14T14:18:01Z",
+  "id": "large",
+  "infrastructure": {
+    "hackerlab_network_id": "network1"
+  },
+  "name": "Large experiment",
+  "networks": [
+    {
+      "cidr": "10.77.1.0/24",
+      "default_router_id": "router1",
+      "hosts": [
+        {
+          "data_content": "",
+          "data_prompt": "",
+          "generate_data": false,
+          "id": "slips-weak",
+          "image": "ubuntu:24.04",
+          "name": "slips-weak",
+          "password": "labpass",
+          "profile": {
+            "attacker_pivot": false,
+            "connections": [
+              {
+                "id": "sqlite_check",
+                "interval": "*/2 * * * *",
+                "target": "db-1"
+              },
+              {
+                "id": "wikipedia",
+                "interval": "*/10 * * * *",
+                "target": ""
+              }
+            ],
+            "role": null,
+            "services": [],
+            "slips_variant": "weak"
+          },
+          "repeats": 1,
+          "run_web": false,
+          "ssh_enabled": true,
+          "type": "normal-user",
+          "username": "admin"
+        },
+        {
+          "data_content": "",
+          "data_prompt": "",
+          "generate_data": false,
+          "id": "slips-middle",
+          "image": "ubuntu:24.04",
+          "name": "slips-middle",
+          "password": "labpass",
+          "profile": {
+            "attacker_pivot": false,
+            "connections": [
+              {
+                "id": "web_internal",
+                "interval": "*/2 * * * *",
+                "target": "snmp-1"
+              },
+              {
+                "id": "google",
+                "interval": "*/7 * * * *",
+                "target": ""
+              }
+            ],
+            "role": null,
+            "services": [],
+            "slips_variant": "middle"
+          },
+          "repeats": 3,
+          "run_web": false,
+          "ssh_enabled": true,
+          "type": "normal-user",
+          "username": "admin"
+        },
+        {
+          "data_content": "",
+          "data_prompt": "",
+          "generate_data": false,
+          "id": "slips-strong",
+          "image": "ubuntu:24.04",
+          "name": "slips-strong",
+          "password": "labpass",
+          "profile": {
+            "attacker_pivot": false,
+            "connections": [
+              {
+                "id": "ftp_check",
+                "interval": "* * * * *",
+                "target": "ftp-1"
+              },
+              {
+                "id": "wikipedia",
+                "interval": "*/5 * * * *",
+                "target": ""
+              }
+            ],
+            "role": null,
+            "services": [],
+            "slips_variant": "strong"
+          },
+          "repeats": 3,
+          "run_web": false,
+          "ssh_enabled": true,
+          "type": "normal-user",
+          "username": "admin"
+        },
+        {
+          "data_content": "",
+          "data_prompt": "",
+          "generate_data": false,
+          "id": "ftp-1",
+          "image": "ubuntu:24.04",
+          "name": "ftp-1",
+          "password": "labpass",
+          "profile": {
+            "attacker_pivot": false,
+            "connections": [
+              {
+                "id": "google",
+                "interval": "*/6 * * * *",
+                "target": ""
+              },
+              {
+                "id": "wikipedia",
+                "interval": "*/8 * * * *",
+                "target": ""
+              }
+            ],
+            "role": null,
+            "services": [
+              "ftp"
+            ],
+            "slips_variant": "none"
+          },
+          "repeats": 1,
+          "run_web": false,
+          "ssh_enabled": true,
+          "type": "normal-user",
+          "username": "admin"
+        },
+        {
+          "data_content": "",
+          "data_prompt": "",
+          "generate_data": false,
+          "id": "web-1",
+          "image": "ubuntu:24.04",
+          "name": "web-1",
+          "password": "labpass",
+          "profile": {
+            "attacker_pivot": false,
+            "connections": [],
+            "role": null,
+            "services": [
+              "web"
+            ],
+            "slips_variant": "none"
+          },
+          "repeats": 1,
+          "run_web": false,
+          "ssh_enabled": true,
+          "type": "normal-user",
+          "username": "admin"
+        },
+        {
+          "data_content": "",
+          "data_prompt": "",
+          "generate_data": false,
+          "id": "snmp-1",
+          "image": "ubuntu:24.04",
+          "name": "snmp-1",
+          "password": "labpass",
+          "profile": {
+            "attacker_pivot": false,
+            "connections": [],
+            "role": null,
+            "services": [
+              "snmp",
+              "web"
+            ],
+            "slips_variant": "none"
+          },
+          "repeats": 1,
+          "run_web": false,
+          "ssh_enabled": true,
+          "type": "normal-user",
+          "username": "admin"
+        },
+        {
+          "data_content": "",
+          "data_prompt": "",
+          "generate_data": false,
+          "id": "attacker-1",
+          "image": "ubuntu:24.04",
+          "name": "attacker",
+          "password": "labpass",
+          "profile": {
+            "attacker_pivot": false,
+            "connections": [],
+            "role": "attacker",
+            "services": [],
+            "slips_variant": "none"
+          },
+          "repeats": 2,
+          "run_web": false,
+          "ssh_enabled": true,
+          "type": "static-attacker",
+          "username": "admin"
+        },
+        {
+          "data_content": "",
+          "data_prompt": "",
+          "generate_data": false,
+          "id": "h1_9_o4h4",
+          "image": "ubuntu:24.04",
+          "name": "db-1",
+          "password": "labpass",
+          "profile": {
+            "attacker_pivot": false,
+            "connections": [
+              {
+                "id": "google",
+                "interval": "*/9 * * * *",
+                "target": ""
+              },
+              {
+                "id": "reddit",
+                "interval": "*/5 * * * *",
+                "target": ""
+              }
+            ],
+            "role": null,
+            "services": [
+              "sqlite"
+            ],
+            "slips_variant": "none"
+          },
+          "repeats": 1,
+          "run_web": false,
+          "ssh_enabled": true,
+          "type": "normal-user",
+          "username": "student"
+        },
+        {
+          "data_content": "",
+          "data_prompt": "",
+          "generate_data": false,
+          "id": "h1_10_6mwg",
+          "image": "ubuntu:24.04",
+          "name": "aracne",
+          "password": "labpass",
+          "profile": {
+            "attacker_pivot": true,
+            "connections": [],
+            "role": null,
+            "services": [],
+            "slips_variant": "none"
+          },
+          "repeats": 1,
+          "run_web": false,
+          "ssh_enabled": false,
+          "type": "normal-user",
+          "username": "pepito"
+        }
+      ],
+      "id": "network1",
+      "internet": true,
+      "name": "Federation",
+      "router_id": "router1",
+      "router_ids": [
+        "router1"
+      ]
+    }
+  ],
+  "router": {
+    "firewall": {
+      "allowed": []
+    },
+    "password": "labpass",
+    "ssh_enabled": false,
+    "username": "admin"
+  },
+  "routers": [
+    {
+      "id": "router1",
+      "name": "core",
+      "parent_router_id": "",
+      "password": "labpass",
+      "ssh_enabled": false,
+      "username": "admin"
+    }
+  ],
+  "updated_at": "2026-09-16T14:46:22Z",
+  "visual": {
+    "networks": {},
+    "routers": {}
+  }
+}

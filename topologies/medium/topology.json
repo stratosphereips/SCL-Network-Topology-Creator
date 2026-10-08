@@ -1,0 +1,244 @@
+{
+  "created_at": "2026-08-12T11:52:10Z",
+  "id": "medium",
+  "infrastructure": {
+    "hackerlab_network_id": "fed"
+  },
+  "name": "Medium experiment",
+  "networks": [
+    {
+      "cidr": "172.20.1.0/24",
+      "default_router_id": "r1",
+      "hosts": [
+        {
+          "data_content": "",
+          "data_prompt": "",
+          "generate_data": false,
+          "id": "s1",
+          "image": "ubuntu:24.04",
+          "name": "slips-1",
+          "password": "labpass",
+          "profile": {
+            "attacker_pivot": false,
+            "connections": [
+              {
+                "id": "ftp_check",
+                "interval": "* * * * *",
+                "target": "ubuntu-1"
+              },
+              {
+                "id": "wikipedia",
+                "interval": "*/5 * * * *",
+                "target": ""
+              }
+            ],
+            "role": null,
+            "services": [
+              "apache"
+            ],
+            "slips_variant": "strong"
+          },
+          "repeats": 1,
+          "run_web": true,
+          "ssh_enabled": true,
+          "type": "normal-user",
+          "username": "admin"
+        },
+        {
+          "data_content": "",
+          "data_prompt": "",
+          "generate_data": false,
+          "id": "s2",
+          "image": "ubuntu:24.04",
+          "name": "slips-2",
+          "password": "labpass",
+          "profile": {
+            "attacker_pivot": false,
+            "connections": [
+              {
+                "id": "web_internal",
+                "interval": "*/2 * * * *",
+                "target": "ubuntu-2"
+              },
+              {
+                "id": "google",
+                "interval": "*/7 * * * *",
+                "target": ""
+              }
+            ],
+            "role": null,
+            "services": [],
+            "slips_variant": "middle"
+          },
+          "repeats": 1,
+          "run_web": false,
+          "ssh_enabled": true,
+          "type": "normal-user",
+          "username": "admin"
+        },
+        {
+          "data_content": "",
+          "data_prompt": "",
+          "generate_data": false,
+          "id": "s3",
+          "image": "ubuntu:24.04",
+          "name": "slips-3",
+          "password": "labpass",
+          "profile": {
+            "attacker_pivot": false,
+            "connections": [
+              {
+                "id": "web_internal",
+                "interval": "*/4 * * * *",
+                "target": "slips-1"
+              },
+              {
+                "id": "wikipedia",
+                "interval": "*/10 * * * *",
+                "target": ""
+              }
+            ],
+            "role": null,
+            "services": [],
+            "slips_variant": "weak"
+          },
+          "repeats": 1,
+          "run_web": false,
+          "ssh_enabled": true,
+          "type": "normal-user",
+          "username": "admin"
+        },
+        {
+          "data_content": "",
+          "data_prompt": "",
+          "generate_data": false,
+          "id": "f1",
+          "image": "ubuntu:24.04",
+          "name": "ubuntu-1",
+          "password": "labpass",
+          "profile": {
+            "attacker_pivot": false,
+            "connections": [
+              {
+                "id": "google",
+                "interval": "*/6 * * * *",
+                "target": ""
+              },
+              {
+                "id": "wikipedia",
+                "interval": "*/8 * * * *",
+                "target": ""
+              }
+            ],
+            "role": null,
+            "services": [
+              "ftp"
+            ],
+            "slips_variant": "none"
+          },
+          "repeats": 1,
+          "run_web": false,
+          "ssh_enabled": false,
+          "type": "normal-user",
+          "username": "admin"
+        },
+        {
+          "data_content": "",
+          "data_prompt": "",
+          "generate_data": false,
+          "id": "u2",
+          "image": "ubuntu:24.04",
+          "name": "ubuntu-2",
+          "password": "labpass",
+          "profile": {
+            "attacker_pivot": false,
+            "connections": [],
+            "role": null,
+            "services": [
+              "snmp",
+              "web"
+            ],
+            "slips_variant": "none"
+          },
+          "repeats": 1,
+          "run_web": false,
+          "ssh_enabled": true,
+          "type": "normal-user",
+          "username": "admin"
+        },
+        {
+          "data_content": "",
+          "data_prompt": "",
+          "generate_data": false,
+          "id": "pv",
+          "image": "ubuntu:24.04",
+          "name": "connect",
+          "password": "labpass",
+          "profile": {
+            "attacker_pivot": true,
+            "connections": [],
+            "role": null,
+            "services": [],
+            "slips_variant": "none"
+          },
+          "repeats": 1,
+          "run_web": false,
+          "ssh_enabled": true,
+          "type": "normal-user",
+          "username": "root"
+        },
+        {
+          "data_content": "",
+          "data_prompt": "",
+          "generate_data": false,
+          "id": "at",
+          "image": "ubuntu:24.04",
+          "name": "attack-1",
+          "password": "labpass",
+          "profile": {
+            "attacker_pivot": false,
+            "connections": [],
+            "role": "attacker",
+            "services": [],
+            "slips_variant": "none"
+          },
+          "repeats": 1,
+          "run_web": false,
+          "ssh_enabled": false,
+          "type": "static-attacker",
+          "username": "admin"
+        }
+      ],
+      "id": "fed",
+      "internet": true,
+      "name": "Federation",
+      "router_id": "r1",
+      "router_ids": [
+        "r1"
+      ]
+    }
+  ],
+  "router": {
+    "firewall": {
+      "allowed": []
+    },
+    "password": "labpass",
+    "ssh_enabled": false,
+    "username": "admin"
+  },
+  "routers": [
+    {
+      "id": "r1",
+      "name": "core",
+      "parent_router_id": "",
+      "password": "labpass",
+      "ssh_enabled": false,
+      "username": "admin"
+    }
+  ],
+  "updated_at": "2026-09-16T09:30:30Z",
+  "visual": {
+    "networks": {},
+    "routers": {}
+  }
+}
