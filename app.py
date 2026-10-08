@@ -235,6 +235,18 @@ DEFAULT_CONNECTION_TYPES = {
         'interval': '*/7 * * * *',
         'command': '/scripts/internet-traffic.sh images',
     },
+    'github': {
+        'label': 'GitHub (external)',
+        'scope': 'external',
+        'interval': '*/6 * * * *',
+        'command': '/scripts/internet-traffic.sh github',
+    },
+    'news': {
+        'label': 'BBC News (external)',
+        'scope': 'external',
+        'interval': '*/4 * * * *',
+        'command': '/scripts/internet-traffic.sh news',
+    },
     'ftp_check': {
         'label': 'FTP check (internal)',
         'scope': 'internal',

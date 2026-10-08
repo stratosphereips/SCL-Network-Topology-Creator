@@ -1,7 +1,7 @@
 #!/bin/bash
 # internet-traffic.sh - Simulate casual user internet traffic
 # Usage: ./internet-traffic.sh <type>
-# Types: google, wikipedia, reddit
+# Types: google, wikipedia, reddit, images, github, news
 
 TYPE="${1:-google}"
 
@@ -41,6 +41,40 @@ case "$TYPE" in
                     FULL_URL="https://upload.wikimedia.org/${img_url}"
                 fi
                 curl -s -A "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36" "$FULL_URL" > /dev/null 2>&1 &
+            done
+        ;;
+    images)
+        # Content-heavy image browsing: a random Wikimedia file page plus a
+        # few images linked from Wikipedia's front page.
+        UA="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        curl -s -A "$UA" -L "https://commons.wikimedia.org/wiki/Special:Random/File" > /dev/null 2>&1
+        curl -s -A "$UA" "https://en.wikipedia.org/wiki/Main_Page" | \
+            grep -oE 'src="[^"]+\.(jpg|jpeg|png|svg|webp)"' | sed 's/src="//;s/"//' | head -3 | \
+            while read -r img; do
+                case "$img" in //*) U="https:$img";; http*) U="$img";; *) U="https://en.wikipedia.org$img";; esac
+                curl -s -A "$UA" "$U" > /dev/null 2>&1 &
+            done
+        ;;
+    github)
+        # A developer browsing GitHub: homepage, trending, then a few of the
+        # trending repositories (lots of HTML + assets).
+        UA="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        curl -s -A "$UA" -L "https://github.com/" > /dev/null 2>&1
+        curl -s -A "$UA" -L "https://github.com/trending" | \
+            grep -oE 'href="/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+"' | sed 's/href="//;s/"//' | \
+            sort -u | head -3 | \
+            while read -r repo; do
+                curl -s -A "$UA" -L "https://github.com${repo}" > /dev/null 2>&1 &
+            done
+        ;;
+    news)
+        # Reading the news: BBC front page, then a few linked articles.
+        UA="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        curl -s -A "$UA" -L "https://www.bbc.com/news" > /dev/null 2>&1
+        curl -s -A "$UA" -L "https://www.bbc.com/news" | \
+            grep -oE '/news/[a-z0-9-]+' | sort -u | head -3 | \
+            while read -r path; do
+                curl -s -A "$UA" -L "https://www.bbc.com${path}" > /dev/null 2>&1 &
             done
         ;;
     *)
