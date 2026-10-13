@@ -33,3 +33,4 @@ variants:
     - network_discovery
     - arp_poisoner
     - ml_online
+    - ml_linear
