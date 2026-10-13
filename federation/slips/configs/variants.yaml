@@ -31,6 +31,5 @@ variants:
     - brute_force
     - anomaly_detection
     - network_discovery
-    - arp
     - arp_poisoner
     - ml_online
