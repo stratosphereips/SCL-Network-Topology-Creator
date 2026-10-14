@@ -64,6 +64,11 @@
                 "id": "google",
                 "interval": "*/7 * * * *",
                 "target": ""
+              },
+              {
+                "id": "news",
+                "interval": "*/4 * * * *",
+                "target": ""
               }
             ],
             "role": null,
@@ -128,6 +133,11 @@
                 "id": "wikipedia",
                 "interval": "*/8 * * * *",
                 "target": ""
+              },
+              {
+                "id": "github",
+                "interval": "*/6 * * * *",
+                "target": ""
               }
             ],
             "role": null,
@@ -170,22 +180,22 @@
           "data_content": "",
           "data_prompt": "",
           "generate_data": false,
-          "id": "pv",
+          "id": "at2",
           "image": "ubuntu:24.04",
-          "name": "connect",
+          "name": "attack-2",
           "password": "labpass",
           "profile": {
-            "attacker_pivot": true,
+            "attacker_pivot": false,
             "connections": [],
-            "role": null,
+            "role": "attacker",
             "services": [],
             "slips_variant": "none"
           },
           "repeats": 1,
           "run_web": false,
-          "ssh_enabled": true,
-          "type": "normal-user",
-          "username": "root"
+          "ssh_enabled": false,
+          "type": "static-attacker",
+          "username": "admin"
         },
         {
           "data_content": "",
@@ -236,7 +246,7 @@
       "username": "admin"
     }
   ],
-  "updated_at": "2026-09-16T09:30:30Z",
+  "updated_at": "2026-10-09T11:38:33Z",
   "visual": {
     "networks": {},
     "routers": {}

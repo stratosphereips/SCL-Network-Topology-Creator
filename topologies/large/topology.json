@@ -94,6 +94,11 @@
                 "id": "wikipedia",
                 "interval": "*/5 * * * *",
                 "target": ""
+              },
+              {
+                "id": "news",
+                "interval": "*/4 * * * *",
+                "target": ""
               }
             ],
             "role": null,
@@ -125,6 +130,11 @@
               {
                 "id": "wikipedia",
                 "interval": "*/8 * * * *",
+                "target": ""
+              },
+              {
+                "id": "github",
+                "interval": "*/6 * * * *",
                 "target": ""
               }
             ],
@@ -173,7 +183,13 @@
           "password": "labpass",
           "profile": {
             "attacker_pivot": false,
-            "connections": [],
+            "connections": [
+              {
+                "id": "news",
+                "interval": "*/4 * * * *",
+                "target": ""
+              }
+            ],
             "role": null,
             "services": [
               "snmp",
@@ -246,22 +262,22 @@
           "data_content": "",
           "data_prompt": "",
           "generate_data": false,
-          "id": "h1_10_6mwg",
+          "id": "attacker-2",
           "image": "ubuntu:24.04",
-          "name": "aracne",
+          "name": "attacker-2",
           "password": "labpass",
           "profile": {
-            "attacker_pivot": true,
+            "attacker_pivot": false,
             "connections": [],
-            "role": null,
+            "role": "attacker",
             "services": [],
             "slips_variant": "none"
           },
-          "repeats": 1,
+          "repeats": 2,
           "run_web": false,
-          "ssh_enabled": false,
-          "type": "normal-user",
-          "username": "pepito"
+          "ssh_enabled": true,
+          "type": "static-attacker",
+          "username": "admin"
         }
       ],
       "id": "network1",
@@ -291,7 +307,7 @@
       "username": "admin"
     }
   ],
-  "updated_at": "2026-09-16T14:46:22Z",
+  "updated_at": "2026-10-09T11:38:33Z",
   "visual": {
     "networks": {},
     "routers": {}

@@ -10,18 +10,20 @@ _id: `large`. Generated from topology.json by make_inventory.py; the Topology Cr
 |---|---|---|---|
 | slips-weak | SLIPS sensor (weak) | — | SQLite query (internal) → db-1 (*/2 * * * *)<br>Wikipedia (external) (*/10 * * * *) |
 | slips-middle | SLIPS sensor (middle) | — | Internal web (internal) → snmp-1 (*/2 * * * *)<br>Google (external) (*/7 * * * *) |
-| slips-strong | SLIPS sensor (strong) | — | FTP check (internal) → ftp-1 (* * * * *)<br>Wikipedia (external) (*/5 * * * *) |
-| ftp-1 | Host | FTP server | Google (external) (*/6 * * * *)<br>Wikipedia (external) (*/8 * * * *) |
+| slips-strong | SLIPS sensor (strong) | — | FTP check (internal) → ftp-1 (* * * * *)<br>Wikipedia (external) (*/5 * * * *)<br>BBC News (external) (*/4 * * * *) |
+| ftp-1 | Host | FTP server | Google (external) (*/6 * * * *)<br>Wikipedia (external) (*/8 * * * *)<br>GitHub (external) (*/6 * * * *) |
 | web-1 | Host | Web server | — |
-| snmp-1 | Host | SNMP, Web server | — |
+| snmp-1 | Host | SNMP, Web server | BBC News (external) (*/4 * * * *) |
 | attacker | Static attacker | — | — |
 | db-1 | Host | SQLite DB | Google (external) (*/9 * * * *)<br>Reddit, 30s reload (external) (*/5 * * * *) |
-| aracne | Attacker pivot (aracne SSH entry) | — | — |
+| attacker-2 | Static attacker | — | — |
 
 ## Connection types used
 
 - **FTP check (internal)** (internal) — an internal FTP host
+- **GitHub (external)** (external) — github.com — homepage, trending, a few repos, with pauses
 - **Google (external)** (external) — google.com
+- **BBC News (external)** (external) — bbc.com/news — front page then a few articles, with pauses
 - **Reddit, 30s reload (external)** (external) — reddit.com — open feed, read ~30s, reload
 - **SQLite query (internal)** (internal) — an internal SQLite host
 - **Internal web (internal)** (internal) — an internal web host (:8000)
@@ -29,6 +31,6 @@ _id: `large`. Generated from topology.json by make_inventory.py; the Topology Cr
 
 ## Notes
 
-- Personal-PC browsers (external web traffic): slips-weak, slips-middle, slips-strong, ftp-1, db-1.
+- Personal-PC browsers (external web traffic): slips-weak, slips-middle, slips-strong, ftp-1, snmp-1, db-1.
 - Hosts with only internal/service connections or none read as infrastructure (e.g. the DB host).
-- The static attacker runs deterministic nmap/hydra against the subnet; the aracne pivot is the LLM agent’s SSH entry point.
+- Static attackers (attacker, attacker-2) run deterministic nmap/hydra against the subnet.

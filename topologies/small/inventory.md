@@ -22,4 +22,4 @@ _id: `small`. Generated from topology.json by make_inventory.py; the Topology Cr
 
 - Personal-PC browsers (external web traffic): slips-weak, slips-strong.
 - Hosts with only internal/service connections or none read as infrastructure (e.g. the DB host).
-- The static attacker runs deterministic nmap/hydra against the subnet; the aracne pivot is the LLM agent’s SSH entry point.
+- Static attackers (static-attacker) run deterministic nmap/hydra against the subnet.

@@ -79,13 +79,21 @@ def inventory_markdown(topology, connection_types, services):
     browsers = [h.get('name') for h in all_hosts
                 if any(c['id'] in ('wikipedia', 'google', 'reddit', 'github', 'news', 'images')
                        for c in ((h.get('profile') or {}).get('connections') or []))]
+    attackers = [h.get('name') for h in all_hosts
+                 if (h.get('profile') or {}).get('role') == 'attacker']
+    pivots = [h.get('name') for h in all_hosts
+              if (h.get('profile') or {}).get('attacker_pivot')]
     lines += ['', '## Notes', '',
               f"- Personal-PC browsers (external web traffic): "
               f"{', '.join(browsers) or 'none'}.",
               '- Hosts with only internal/service connections or none read as '
               'infrastructure (e.g. the DB host).',
-              '- The static attacker runs deterministic nmap/hydra against the '
-              'subnet; the aracne pivot is the LLM agent’s SSH entry point.', '']
+              f"- Static attackers ({', '.join(attackers) or 'none'}) run "
+              'deterministic nmap/hydra against the subnet.']
+    if pivots:
+        lines.append(f"- The aracne pivot ({', '.join(pivots)}) is the LLM agent’s "
+                     'SSH entry point.')
+    lines.append('')
     return '\n'.join(lines) + '\n'
 
 

@@ -5,11 +5,6 @@
 # Sections must exist in the base; keys must exist in the base unless the
 # section is module-owned (render_configs.MODULE_OWNED_SECTIONS).
 
-parameters:
-  # SLIPS time window (alert economics: one alert per profile/threat/bucket
-  # per TW).
-  time_window_width: 7200
-
 detection:
   # Live alert gate (RATL = ATL x risk weight). Equals the current upstream
   # default; pinned explicitly so an upstream change cannot silently shift
