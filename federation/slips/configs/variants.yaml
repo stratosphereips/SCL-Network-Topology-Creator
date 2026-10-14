@@ -13,6 +13,12 @@ variants:
     - leak_detector
     - cyst
     - arp_poisoner
+  # Strength gradient (Oct 14, measured on the bal1 sweep): conn_analyzer is the
+  # only module whose conn-flow labels no other module duplicates (every
+  # ml_*/http/brute_force/network_discovery label is also cited by it), and
+  # arp is the only source of ARP labels. Estimated label recall vs GT, conn /
+  # ARP: strong 0.99 / 0.995, middle ~0.79 / 0.995 (ML detectors still label
+  # conn flows), weak ~0.62 / 0.995 (only ml_online left for conn).
   middle:
     - template
     - exporting_alerts
@@ -21,6 +27,7 @@ variants:
     - cyst
     - brute_force
     - anomaly_detection
+    - conn_analyzer
     - arp_poisoner
   weak:
     - template
@@ -30,7 +37,7 @@ variants:
     - cyst
     - brute_force
     - anomaly_detection
+    - conn_analyzer
     - network_discovery
-    - arp_poisoner
-    - ml_online
     - ml_linear
+    - arp_poisoner
