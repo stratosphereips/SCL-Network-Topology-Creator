@@ -1,8 +1,10 @@
 #!/bin/bash
 # Static attacker entrypoint — deterministic, mechanical, high-cadence.
-# Every ATTACK_INTERVAL seconds (default 60) it runs a fresh nmap -sS -A
-# sweep of its network subnet, followed by a dedicated SSH brute-forcing pass
-# through nmap's ssh-brute NSE script driven with curated user/pass lists.
+# Once at attack-phase start it runs a host-discovery sweep (nmap -sn). Then
+# every ATTACK_INTERVAL seconds (default 60) it runs a fresh nmap -sS -A sweep
+# and a TCP connect (-sT) sweep of its subnet, an SSH discovery that also
+# enumerates auth methods (ssh-auth-methods NSE), and a hydra SSH brute pass
+# driven with curated user/pass lists.
 #
 # Why this cadence: SLIPS fires alerts per (profile, timewindow) — fresh
 # nmap evidence arriving each minute keeps every TW's attack-labelling alive
@@ -45,6 +47,12 @@ while [ ! -f /tmp/start_static_attacker ]; do
 done
 echo "[static-attacker] attack phase started — engaging" | tee -a "$LOG"
 
+# One-time host-discovery sweep at the very start (nmap -sn: ping/ARP only,
+# no port scan). Mirrors a real attacker scouting the subnet once before the
+# recurring scans begin.
+echo "===== $(date -u +%F\ %T) initial host-discovery sweep $SUBNET (nmap -sn) =====" >> "$LOG"
+nmap -sn -T4 --exclude 127.0.0.0/8,localhost "$SUBNET" >> "$LOG" 2>&1 || true
+
 while true; do
   cycle=$(date -u +%F\ %T)
   echo "===== $cycle sweep $SUBNET (nmap -sS -A, top ${TOP_PORTS} ports) =====" >> "$LOG"
@@ -55,14 +63,25 @@ while true; do
     --exclude 127.0.0.0/8,localhost \
     "$SUBNET" >> "$LOG" 2>&1 || true
 
-  echo "===== $cycle ssh-brute pass $SUBNET (nmap discover + hydra) =====" >> "$LOG"
-  # SSH brute-forcing: nmap discovers live ssh services, hydra forces them
-  # with the same curated lists. nmap's ssh-brute NSE script can't be used in
-  # this image (libssh2-utility handshake error against OpenSSH >=8.9), so
-  # hydra stands in while nmap keeps the discovery/drive responsibility.
-  nmap -sS -T4 -p 22 --open -oG - \
+  echo "===== $cycle tcp-connect sweep $SUBNET (nmap -sT, top ${TOP_PORTS} ports) =====" >> "$LOG"
+  # TCP connect scan: completes the 3-way handshake (vs the -sS half-open
+  # above), so Zeek sees established+closed conn flows with different states.
+  nmap -sT -T4 \
+    --top-ports "$TOP_PORTS" \
     --exclude 127.0.0.0/8,localhost \
-    "$SUBNET" 2>/dev/null | awk '/22\/open/ {print $2}' > /tmp/ssh_targets.txt
+    "$SUBNET" >> "$LOG" 2>&1 || true
+
+  echo "===== $cycle ssh discovery + auth-methods $SUBNET (nmap --script ssh-auth-methods) =====" >> "$LOG"
+  # SSH discovery that also enumerates each server's accepted auth methods
+  # (ssh-auth-methods NSE; needs a full TCP connection, hence -sT). Normal
+  # output (incl. the script result) goes to the log; the greppable copy to a
+  # file feeds the hydra target list. nmap's ssh-brute NSE stays unused in this
+  # image (libssh2 handshake error vs OpenSSH >=8.9), so hydra does the brute.
+  nmap -sT -T4 -p 22 --open --script ssh-auth-methods \
+    -oG /tmp/ssh_targets.gnmap \
+    --exclude 127.0.0.0/8,localhost \
+    "$SUBNET" >> "$LOG" 2>&1 || true
+  awk '/22\/open/ {print $2}' /tmp/ssh_targets.gnmap > /tmp/ssh_targets.txt 2>/dev/null || : > /tmp/ssh_targets.txt
   if [ -s /tmp/ssh_targets.txt ]; then
     while read -r host; do
       [ -n "$host" ] || continue
