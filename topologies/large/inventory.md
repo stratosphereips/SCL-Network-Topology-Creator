@@ -14,9 +14,10 @@ _id: `large`. Generated from topology.json by make_inventory.py; the Topology Cr
 | ftp-1 | Host | FTP server | Google (external) (*/6 * * * *)<br>Wikipedia (external) (*/8 * * * *)<br>GitHub (external) (*/6 * * * *) |
 | web-1 | Host | Web server | — |
 | snmp-1 | Host | SNMP, Web server | BBC News (external) (*/4 * * * *) |
-| attacker | Static attacker | — | — |
+| attacker-1 | Static attacker | — | — |
 | db-1 | Host | SQLite DB | Google (external) (*/9 * * * *)<br>Reddit, 30s reload (external) (*/5 * * * *) |
 | attacker-2 | Static attacker | — | — |
+| attacker-3 | Static attacker | — | — |
 
 ## Connection types used
 
@@ -33,4 +34,4 @@ _id: `large`. Generated from topology.json by make_inventory.py; the Topology Cr
 
 - Personal-PC browsers (external web traffic): slips-weak, slips-middle, slips-strong, ftp-1, snmp-1, db-1.
 - Hosts with only internal/service connections or none read as infrastructure (e.g. the DB host).
-- Static attackers (attacker, attacker-2) run deterministic nmap/hydra against the subnet.
+- Static attackers (attacker-1, attacker-2, attacker-3) run deterministic nmap/hydra against the subnet.

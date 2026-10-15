@@ -19,22 +19,22 @@
           "name": "slips-weak",
           "password": "labpass",
           "profile": {
+            "role": null,
+            "slips_variant": "weak",
             "attacker_pivot": false,
+            "services": [],
             "connections": [
               {
                 "id": "wikipedia",
-                "interval": "",
-                "target": ""
+                "target": "",
+                "interval": ""
               },
               {
                 "id": "google",
-                "interval": "*/2 * * * *",
-                "target": ""
+                "target": "",
+                "interval": "*/2 * * * *"
               }
-            ],
-            "role": null,
-            "services": [],
-            "slips_variant": "weak"
+            ]
           },
           "repeats": 1,
           "run_web": false,
@@ -51,22 +51,22 @@
           "name": "slips-strong",
           "password": "labpass",
           "profile": {
+            "role": null,
+            "slips_variant": "strong",
             "attacker_pivot": false,
+            "services": [],
             "connections": [
               {
                 "id": "google",
-                "interval": "*/3 * * * *",
-                "target": ""
+                "target": "",
+                "interval": "*/3 * * * *"
               },
               {
                 "id": "images",
-                "interval": "",
-                "target": ""
+                "target": "",
+                "interval": ""
               }
-            ],
-            "role": null,
-            "services": [],
-            "slips_variant": "strong"
+            ]
           },
           "repeats": 1,
           "run_web": false,
@@ -78,16 +78,16 @@
           "data_content": "",
           "data_prompt": "",
           "generate_data": false,
-          "id": "static-attacker",
+          "id": "attacker-1",
           "image": "ubuntu:24.04",
-          "name": "static-attacker",
+          "name": "attacker-1",
           "password": "labpass",
           "profile": {
-            "attacker_pivot": false,
-            "connections": [],
             "role": "attacker",
+            "slips_variant": "none",
+            "attacker_pivot": false,
             "services": [],
-            "slips_variant": "none"
+            "connections": []
           },
           "repeats": 1,
           "run_web": false,
@@ -123,9 +123,10 @@
       "username": "admin"
     }
   ],
-  "updated_at": "2026-09-30T12:04:24Z",
+  "updated_at": "2026-10-15T11:04:52Z",
   "visual": {
     "networks": {},
     "routers": {}
-  }
+  },
+  "warnings": []
 }

@@ -13,8 +13,8 @@ _id: `medium`. Generated from topology.json by make_inventory.py; the Topology C
 | slips-3 | SLIPS sensor (weak) | — | Internal web (internal) → slips-1 (*/4 * * * *)<br>Wikipedia (external) (*/10 * * * *) |
 | ubuntu-1 | Host | FTP server | Google (external) (*/6 * * * *)<br>Wikipedia (external) (*/8 * * * *)<br>GitHub (external) (*/6 * * * *) |
 | ubuntu-2 | Host | SNMP, Web server | — |
-| attack-2 | Static attacker | — | — |
-| attack-1 | Static attacker | — | — |
+| attacker-1 | Static attacker | — | — |
+| attacker-2 | Static attacker | — | — |
 
 ## Connection types used
 
@@ -29,4 +29,4 @@ _id: `medium`. Generated from topology.json by make_inventory.py; the Topology C
 
 - Personal-PC browsers (external web traffic): slips-1, slips-2, slips-3, ubuntu-1.
 - Hosts with only internal/service connections or none read as infrastructure (e.g. the DB host).
-- Static attackers (attack-2, attack-1) run deterministic nmap/hydra against the subnet.
+- Static attackers (attacker-1, attacker-2) run deterministic nmap/hydra against the subnet.

@@ -19,24 +19,24 @@
           "name": "slips-1",
           "password": "labpass",
           "profile": {
-            "attacker_pivot": false,
-            "connections": [
-              {
-                "id": "ftp_check",
-                "interval": "* * * * *",
-                "target": "ubuntu-1"
-              },
-              {
-                "id": "wikipedia",
-                "interval": "*/5 * * * *",
-                "target": ""
-              }
-            ],
             "role": null,
+            "slips_variant": "strong",
+            "attacker_pivot": false,
             "services": [
               "apache"
             ],
-            "slips_variant": "strong"
+            "connections": [
+              {
+                "id": "ftp_check",
+                "target": "ubuntu-1",
+                "interval": "* * * * *"
+              },
+              {
+                "id": "wikipedia",
+                "target": "",
+                "interval": "*/5 * * * *"
+              }
+            ]
           },
           "repeats": 1,
           "run_web": true,
@@ -53,27 +53,27 @@
           "name": "slips-2",
           "password": "labpass",
           "profile": {
+            "role": null,
+            "slips_variant": "middle",
             "attacker_pivot": false,
+            "services": [],
             "connections": [
               {
                 "id": "web_internal",
-                "interval": "*/2 * * * *",
-                "target": "ubuntu-2"
+                "target": "ubuntu-2",
+                "interval": "*/2 * * * *"
               },
               {
                 "id": "google",
-                "interval": "*/7 * * * *",
-                "target": ""
+                "target": "",
+                "interval": "*/7 * * * *"
               },
               {
                 "id": "news",
-                "interval": "*/4 * * * *",
-                "target": ""
+                "target": "",
+                "interval": "*/4 * * * *"
               }
-            ],
-            "role": null,
-            "services": [],
-            "slips_variant": "middle"
+            ]
           },
           "repeats": 1,
           "run_web": false,
@@ -90,22 +90,22 @@
           "name": "slips-3",
           "password": "labpass",
           "profile": {
+            "role": null,
+            "slips_variant": "weak",
             "attacker_pivot": false,
+            "services": [],
             "connections": [
               {
                 "id": "web_internal",
-                "interval": "*/4 * * * *",
-                "target": "slips-1"
+                "target": "slips-1",
+                "interval": "*/4 * * * *"
               },
               {
                 "id": "wikipedia",
-                "interval": "*/10 * * * *",
-                "target": ""
+                "target": "",
+                "interval": "*/10 * * * *"
               }
-            ],
-            "role": null,
-            "services": [],
-            "slips_variant": "weak"
+            ]
           },
           "repeats": 1,
           "run_web": false,
@@ -122,29 +122,29 @@
           "name": "ubuntu-1",
           "password": "labpass",
           "profile": {
-            "attacker_pivot": false,
-            "connections": [
-              {
-                "id": "google",
-                "interval": "*/6 * * * *",
-                "target": ""
-              },
-              {
-                "id": "wikipedia",
-                "interval": "*/8 * * * *",
-                "target": ""
-              },
-              {
-                "id": "github",
-                "interval": "*/6 * * * *",
-                "target": ""
-              }
-            ],
             "role": null,
+            "slips_variant": "none",
+            "attacker_pivot": false,
             "services": [
               "ftp"
             ],
-            "slips_variant": "none"
+            "connections": [
+              {
+                "id": "google",
+                "target": "",
+                "interval": "*/6 * * * *"
+              },
+              {
+                "id": "wikipedia",
+                "target": "",
+                "interval": "*/8 * * * *"
+              },
+              {
+                "id": "github",
+                "target": "",
+                "interval": "*/6 * * * *"
+              }
+            ]
           },
           "repeats": 1,
           "run_web": false,
@@ -161,14 +161,14 @@
           "name": "ubuntu-2",
           "password": "labpass",
           "profile": {
-            "attacker_pivot": false,
-            "connections": [],
             "role": null,
+            "slips_variant": "none",
+            "attacker_pivot": false,
             "services": [
               "snmp",
               "web"
             ],
-            "slips_variant": "none"
+            "connections": []
           },
           "repeats": 1,
           "run_web": false,
@@ -180,16 +180,16 @@
           "data_content": "",
           "data_prompt": "",
           "generate_data": false,
-          "id": "at2",
+          "id": "attacker-1",
           "image": "ubuntu:24.04",
-          "name": "attack-2",
+          "name": "attacker-1",
           "password": "labpass",
           "profile": {
-            "attacker_pivot": false,
-            "connections": [],
             "role": "attacker",
+            "slips_variant": "none",
+            "attacker_pivot": false,
             "services": [],
-            "slips_variant": "none"
+            "connections": []
           },
           "repeats": 1,
           "run_web": false,
@@ -201,16 +201,16 @@
           "data_content": "",
           "data_prompt": "",
           "generate_data": false,
-          "id": "at",
+          "id": "attacker-2",
           "image": "ubuntu:24.04",
-          "name": "attack-1",
+          "name": "attacker-2",
           "password": "labpass",
           "profile": {
-            "attacker_pivot": false,
-            "connections": [],
             "role": "attacker",
+            "slips_variant": "none",
+            "attacker_pivot": false,
             "services": [],
-            "slips_variant": "none"
+            "connections": []
           },
           "repeats": 1,
           "run_web": false,
@@ -246,9 +246,10 @@
       "username": "admin"
     }
   ],
-  "updated_at": "2026-10-09T11:38:33Z",
+  "updated_at": "2026-10-15T11:04:53Z",
   "visual": {
     "networks": {},
     "routers": {}
-  }
+  },
+  "warnings": []
 }

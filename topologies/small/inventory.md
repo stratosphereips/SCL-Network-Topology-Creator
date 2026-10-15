@@ -10,7 +10,7 @@ _id: `small`. Generated from topology.json by make_inventory.py; the Topology Cr
 |---|---|---|---|
 | slips-weak | SLIPS sensor (weak) | — | Wikipedia (external) ()<br>Google (external) (*/2 * * * *) |
 | slips-strong | SLIPS sensor (strong) | — | Google (external) (*/3 * * * *)<br>Images (external) () |
-| static-attacker | Static attacker | — | — |
+| attacker-1 | Static attacker | — | — |
 
 ## Connection types used
 
@@ -22,4 +22,4 @@ _id: `small`. Generated from topology.json by make_inventory.py; the Topology Cr
 
 - Personal-PC browsers (external web traffic): slips-weak, slips-strong.
 - Hosts with only internal/service connections or none read as infrastructure (e.g. the DB host).
-- Static attackers (static-attacker) run deterministic nmap/hydra against the subnet.
+- Static attackers (attacker-1) run deterministic nmap/hydra against the subnet.
