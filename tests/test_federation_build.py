@@ -75,6 +75,41 @@ def test_render_rejects_bad_disable_names(disable, message):
         render_configs.render(BASE, {}, variants, MODULE_DIRS)
 
 
+def test_variant_config_overlay_is_applied_without_mutating_base():
+    variants = {"default": "strong", "variants": {
+        "strong": {"disable": ["template"]},
+        "weak": {"disable": ["brute_force"],
+                 "config": {"arp": {"scan_detection_rate": 0.4}}},
+    }}
+    out = render_configs.render(BASE, {}, variants, MODULE_DIRS)
+    assert out["slips_p2p_weak.yaml"]["arp"] == {"scan_detection_rate": 0.4}
+    assert out["slips_p2p_weak.yaml"]["modules"]["disable"] == ["brute_force"]
+    # strong has no overlay -> no arp section (module defaults to full strength)
+    assert "arp" not in out["slips_p2p_strong.yaml"]
+    # the overlay is a module-dir section, not a base section, and base stays put
+    assert "arp" not in BASE
+
+
+def test_variant_config_rejects_unknown_section():
+    variants = {"default": "strong", "variants": {
+        "strong": {"disable": ["template"],
+                   "config": {"nosuchsection": {"a": 1}}}}}
+    with pytest.raises(ValueError, match="variant config section 'nosuchsection'"):
+        render_configs.render(BASE, {}, variants, MODULE_DIRS)
+
+
+def test_shipped_variants_grade_arp_detection_rate():
+    with open(os.path.join(CONFIGS_DIR, "variants.yaml")) as f:
+        variants = yaml.safe_load(f)["variants"]
+
+    def rate(v):
+        spec = variants[v]
+        cfg = spec.get("config", {}) if isinstance(spec, dict) else {}
+        return cfg.get("arp", {}).get("scan_detection_rate", 1.0)
+
+    assert rate("strong") == 1.0 > rate("middle") > rate("weak") > 0.0
+
+
 def test_shipped_overrides_and_variants_are_consistent():
     with open(os.path.join(CONFIGS_DIR, "overrides.yaml")) as f:
         overrides = yaml.safe_load(f)

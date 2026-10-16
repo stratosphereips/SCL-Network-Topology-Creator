@@ -3,15 +3,20 @@
 
 base (the SLIPS branch's own config/slips.yaml, never edited)
   + overrides.yaml (shared federation deltas)
-  + variants.yaml  (per-variant modules.disable)
+  + variants.yaml  (per-variant modules.disable + optional config overlays)
   -> <out-dir>/slips_p2p_<variant>.yaml, and slips_p2p.yaml = default variant
+
+Each variant is either a bare list of module names to disable, or a mapping
+{disable: [...], config: {<section>: {<key>: <value>}}} whose config overlay
+is applied on top of the merged base for that variant only.
 
 Fails the build (exit 1) on:
 - an override section missing from the base, or an override key missing
   from its base section (stale/typo'd locations), except in sections the
   federated module owns;
 - a disable name that matches no module directory (SLIPS matching rule);
-- a disable name that would match the federated module itself.
+- a disable name that would match the federated module itself;
+- a per-variant config section that is neither a base section nor a module.
 
 Output is plain block YAML (2-space indent, no blank lines inside
 sections) so the runner's line-based per-run patching stays reliable.
@@ -72,6 +77,28 @@ def validate_disable_list(variant, names, module_dirs):
         raise ValueError("; ".join(errors))
 
 
+def apply_variant_config(cfg, overlay, module_dirs):
+    """Overlay a variant's own config sections onto cfg, returning a new dict
+    (cfg and its sections are not mutated). A section must be a base config
+    section or a SLIPS module dir name (so a module can read its own
+    per-variant setting); an unknown section is a typo and raises ValueError."""
+    errors = []
+    out = {k: (dict(v) if isinstance(v, dict) else v) for k, v in cfg.items()}
+    for section, values in (overlay or {}).items():
+        if section not in cfg and section not in module_dirs:
+            errors.append(
+                f"variant config section '{section}' is not a base config "
+                f"section nor a SLIPS module"
+            )
+            continue
+        merged_section = dict(out.get(section) or {})
+        merged_section.update(values or {})
+        out[section] = merged_section
+    if errors:
+        raise ValueError("; ".join(errors))
+    return out
+
+
 def render(base, overrides, variants_doc, module_dirs):
     """Return {filename: config_dict} for every variant plus the default."""
     merged = apply_overrides(base, overrides)
@@ -80,10 +107,16 @@ def render(base, overrides, variants_doc, module_dirs):
     if default not in variants:
         raise ValueError(f"default variant '{default}' not defined")
     out = {}
-    for variant, disable in variants.items():
+    for variant, spec in variants.items():
+        if isinstance(spec, dict):
+            disable = spec.get("disable", [])
+            overlay = spec.get("config", {})
+        else:
+            disable, overlay = spec, {}
         validate_disable_list(variant, disable, module_dirs)
         cfg = dict(merged)
         cfg["modules"] = {**(merged.get("modules") or {}), "disable": list(disable)}
+        cfg = apply_variant_config(cfg, overlay, module_dirs)
         out[f"slips_p2p_{variant}.yaml"] = cfg
     out["slips_p2p.yaml"] = out[f"slips_p2p_{default}.yaml"]
     return out

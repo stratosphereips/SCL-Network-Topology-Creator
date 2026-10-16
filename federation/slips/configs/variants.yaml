@@ -1,43 +1,62 @@
-# Detector variants: the ONLY difference between strong/middle/weak peers is
-# which SLIPS modules are disabled. Names follow SLIPS matching (lowercase,
-# '_'/'-'/' ' stripped, substring of the module path), so 'brute_force'
-# disables brute_force_detector. render_configs.py rejects names that match
-# no module, and any name that would disable the federated module.
+# Detector variants: strong/middle/weak peers differ in (a) which SLIPS
+# modules are disabled and (b) optional per-variant config overlays.
+#
+# Each variant is either a bare list of module names to disable, or a mapping:
+#   disable: [ ... module names ... ]
+#   config:  { <section>: { <key>: <value> } }   # optional per-variant deltas
+# Disable names follow SLIPS matching (lowercase, '_'/'-'/' ' stripped,
+# substring of the module path), so 'brute_force' disables brute_force_detector.
+# A config section may be a base slips.yaml section or a module dir name (so a
+# module can read its own per-variant setting). render_configs.py rejects an
+# unknown config section, a disable name that matches no module, and any name
+# that would disable the federated module.
+#
+# Strength gradient (conn flows): conn_analyzer is the only module whose
+# conn-flow labels no other module duplicates; disabling it, then the ML
+# detectors, steps conn recall down strong -> middle -> weak.
+# ARP flows: the `arp` module is the ONLY source of ARP labels and ARP is ~85%
+# of traffic, so a binary on/off would make middle==strong on ARP and drown the
+# gradient. Instead we grade it with arp.scan_detection_rate (the fraction of a
+# detected sweep's flows cited as evidence): strong 1.0 (full, omitted =
+# default), middle 0.7, weak 0.4 - so the per-peer order holds on ARP too.
 default: strong
 
 variants:
   strong:
-    - template
-    - exporting_alerts
-    - blocking
-    - leak_detector
-    - cyst
-    - arp_poisoner
-  # Strength gradient (Oct 14, measured on the bal1 sweep): conn_analyzer is the
-  # only module whose conn-flow labels no other module duplicates (every
-  # ml_*/http/brute_force/network_discovery label is also cited by it), and
-  # arp is the only source of ARP labels. Estimated label recall vs GT, conn /
-  # ARP: strong 0.99 / 0.995, middle ~0.79 / 0.995 (ML detectors still label
-  # conn flows), weak ~0.62 / 0.995 (only ml_online left for conn).
+    disable:
+      - template
+      - exporting_alerts
+      - blocking
+      - leak_detector
+      - cyst
+      - arp_poisoner
   middle:
-    - template
-    - exporting_alerts
-    - blocking
-    - leak_detector
-    - cyst
-    - brute_force
-    - anomaly_detection
-    - conn_analyzer
-    - arp_poisoner
+    disable:
+      - template
+      - exporting_alerts
+      - blocking
+      - leak_detector
+      - cyst
+      - brute_force
+      - anomaly_detection
+      - conn_analyzer
+      - arp_poisoner
+    config:
+      arp:
+        scan_detection_rate: 0.7
   weak:
-    - template
-    - exporting_alerts
-    - blocking
-    - leak_detector
-    - cyst
-    - brute_force
-    - anomaly_detection
-    - conn_analyzer
-    - network_discovery
-    - ml_linear
-    - arp_poisoner
+    disable:
+      - template
+      - exporting_alerts
+      - blocking
+      - leak_detector
+      - cyst
+      - brute_force
+      - anomaly_detection
+      - conn_analyzer
+      - network_discovery
+      - ml_linear
+      - arp_poisoner
+    config:
+      arp:
+        scan_detection_rate: 0.4
