@@ -16,9 +16,10 @@
 # detectors, steps conn recall down strong -> middle -> weak.
 # ARP flows: the `arp` module is the ONLY source of ARP labels and ARP is ~85%
 # of traffic, so a binary on/off would make middle==strong on ARP and drown the
-# gradient. Instead we grade it with arp.scan_detection_rate (the fraction of a
-# detected sweep's flows cited as evidence): strong 1.0 (full, omitted =
-# default), middle 0.7, weak 0.4 - so the per-peer order holds on ARP too.
+# gradient. We grade it with arp.scan_detection_rate (the fraction of a detected
+# sweep's flows cited as evidence) - equivalent to three ARP detectors of
+# different capability. Evenly spaced by design: strong 1.0 (omitted = default),
+# middle 0.75, weak 0.5 - so the per-peer order holds on ARP as well as conn.
 default: strong
 
 variants:
@@ -43,7 +44,7 @@ variants:
       - arp_poisoner
     config:
       arp:
-        scan_detection_rate: 0.7
+        scan_detection_rate: 0.75
   weak:
     disable:
       - template
@@ -59,4 +60,4 @@ variants:
       - arp_poisoner
     config:
       arp:
-        scan_detection_rate: 0.4
+        scan_detection_rate: 0.5
