@@ -68,7 +68,7 @@
               }
             ]
           },
-          "repeats": 1,
+          "repeats": 3,
           "run_web": false,
           "ssh_enabled": true,
           "type": "normal-user",
@@ -105,7 +105,7 @@
               }
             ]
           },
-          "repeats": 1,
+          "repeats": 3,
           "run_web": false,
           "ssh_enabled": true,
           "type": "normal-user",
