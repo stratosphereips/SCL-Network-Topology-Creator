@@ -18,6 +18,19 @@ def validate_topology(topology):
     if len(networks) > 8:
         raise ValueError('At most 8 networks are supported in this first version.')
 
+    # Older saved topologies only had a topology-wide NSG observer switch. Use
+    # it as the default when no host-level selection exists, so loading and
+    # saving an existing lab preserves its former "observe every host" behavior.
+    monitoring = topology.setdefault('monitoring', {})
+    nsg_observer = monitoring.setdefault('nsg_observer', {})
+    legacy_observer_enabled = bool(nsg_observer.get('enabled'))
+    has_host_observer_selection = any(
+        'observation_enabled' in host
+        for network in networks
+        for host in (network.get('hosts') or [])
+        if isinstance(host, dict)
+    )
+
     seen_networks = set()
     for index, network in enumerate(networks, start=1):
         network['id'] = app.normalize_identifier(network.get('id'), f'net{index}')
@@ -45,6 +58,10 @@ def validate_topology(topology):
             host['agent_enabled'] = bool(host.get('agent_enabled', False))
             host['agent_type'] = str(host.get('agent_type', '') or '')
             host['agents'] = app.host_agents(host)
+            host['observation_enabled'] = bool(host.get(
+                'observation_enabled',
+                legacy_observer_enabled if not has_host_observer_selection else False,
+            ))
             # Deliberate control-enabling misconfig flag (passwordless-sudo
             # privesc) — see scripts.py::host_script.
             host['privesc_nopasswd'] = bool(host.get('privesc_nopasswd'))
@@ -172,6 +189,13 @@ def validate_topology(topology):
     slips.setdefault('enabled', False)
     slips.setdefault('capture_source', root_router_id)
     slips.setdefault('defender_enabled', True)
+    nsg_observer = monitoring.setdefault('nsg_observer', {})
+    nsg_observer['enabled'] = any(
+        host.get('observation_enabled', False)
+        for network in networks
+        for host in network.get('hosts', [])
+    )
+    nsg_observer.setdefault('state_level', 'operational')
     return topology
 
 

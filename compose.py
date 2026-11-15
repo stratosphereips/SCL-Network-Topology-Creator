@@ -35,6 +35,17 @@ def _observer_config(topology):
     return cfg if cfg.get('enabled') else None
 
 
+def _host_observation_enabled(host, observer_cfg):
+    """Return whether this host should use its NSG-observed image.
+
+    Missing host flags retain compatibility with topology files created before
+    per-host selection existed, where the global enabled switch meant all hosts.
+    """
+    if 'observation_enabled' in host:
+        return bool(host.get('observation_enabled'))
+    return bool(observer_cfg)
+
+
 # Base images that CANNOT carry the NSG observer, with the reason. The observer
 # scripts require Python >= 3.7; old bases (e.g. Ubuntu bionic = python 3.6)
 # can still be observed by building their -observed variant with the
@@ -67,7 +78,7 @@ def _observed_image(image):
 
 
 def _apply_observer(service_config, topology, run_id, service_name, observer_cfg,
-                    is_router=False, has_agents=False, strace_enabled=False):
+                    is_router=False, has_agents=False):
     """Turn a host/router service into an NSG-observed service in place.
 
     - swaps the image for its -observed derivative (observe-entrypoint PID 1);
@@ -94,45 +105,13 @@ def _apply_observer(service_config, topology, run_id, service_name, observer_cfg
         f'{evidence_dir}:/observation',
     ]
     service_config['security_opt'] = ['seccomp=unconfined']
-    # strace (container root, no CAP_SYS_PTRACE in docker's default cap set)
-    # reads tracee memory with process_vm_readv, which runs the full
-    # ptrace_may_access check on every read. For privilege-dropped tracees
-    # (the observer's own setpriv wrapper pre-exec, smbd's nobody-cred
-    # vfork/posix_spawn children) that check fails with EPERM and strace
-    # prints pointer-form execve/openat args the FM analyzers cannot parse
-    # (fail-closed UNMEASURED). The capability is namespaced to the
-    # container's user namespace, so it grants no cross-container reach;
-    # strace already required seccomp=unconfined.
-    service_config['cap_add'] = sorted(set(
-        (service_config.get('cap_add') or []) + ['SYS_PTRACE']))
-    # Graceful stop needs more than docker's 10s default: the observer's
-    # strace children must flush large buffers and the supervisor must write
-    # the workload_exited bracket the AFM analyzers key on. Without it the
-    # container gets SIGKILLed mid-shutdown and every AFM unit degrades to
-    # UNMEASURED (workload_exited_missing).
-    service_config['stop_grace_period'] = '45s'
     env = {
-        # Zeek is opt-in per topology (monitoring.observer.zeek) and only armed
-        # on the router — the egress chokepoint. The observed image ships zeek
-        # (verified: zeek 9.0.1 on arm64 processes the router captures); the
-        # historical "no Zeek repo builds" comment no longer holds. Victim and
-        # agent namespaces see little unique traffic (everything crosses the
-        # router), so only the router gets the live zeek sensor.
-        'OBS_ENABLE_ZEEK': '1' if (
-            is_router
-            and (topology.get('monitoring') or {}).get('observer', {}).get('zeek')
-        ) else '0',
+        'OBS_ENABLE_ZEEK': '0',
         'OBS_ENABLE_BCC': '0',
         'OBS_STATE_LEVEL': observer_cfg.get('state_level') or 'operational',
         'OBS_ARCHIVE_CHANGED_FILES': '0',
         # Cap hashed file size so reconciliation never chokes on large blobs.
         'OBS_HASH_MAX_BYTES': '104857600',
-        # Under full-campaign load (15 containers + agent + analyzers) the
-        # reconciler's scans stretch past the 30s interval; the integrity
-        # layer's cadence limit is max(3*interval, interval+60), so a 45s
-        # interval keeps borderline scan gaps from degrading AFM2 to
-        # UNMEASURED (observed 90.1s gaps against a 90.0s limit).
-        'OBS_SNAPSHOT_INTERVAL': '45',
     }
     if is_router:
         # The router is the egress chokepoint: keep the fullest traffic record.
@@ -152,17 +131,11 @@ def _apply_observer(service_config, topology, run_id, service_name, observer_cfg
         # (measured: a bare `which` took 3s under tracing). The agent stack
         # is subprocess-heavy (HexStrike /health alone spawns ~50 tool
         # probes; every MCP tool call shells out), so syscall tracing there
-        # is opt-in per host (host field `strace_enabled`). Default stays
-        # OFF: the process monitor still records every command with full
-        # cmdline + lifecycle, and the files/sockets/trajectory monitors
-        # keep the effect stream — only per-syscall detail is lost. With
-        # strace_enabled=true the observer's workload wrap (strace -ff over
-        # the original image entrypoint) traces the AGENT's own process tree
-        # (opencode serve, guardrail judge, every bash-tool child) — the
-        # trace plane the FM syscalls detectors require on the agent host
-        # (paper-l1-r6 post-mortem: syscalls/ empty there, 9 detectors fail
-        # closed; fm_eval's agent-shell self-attach is the same discipline).
-        env['OBS_ENABLE_STRACE'] = '1' if strace_enabled else '0'
+        # makes the agent unusable. The process monitor still records every
+        # command with full cmdline + lifecycle, and the files/sockets/
+        # trajectory monitors keep the effect stream — only per-syscall
+        # detail is lost on the attacker host.
+        env['OBS_ENABLE_STRACE'] = '0'
         # Wrap the original image entrypoint (see docstring).
         service_config['command'] = ['/usr/local/bin/entrypoint.sh'] + list(
             service_config.get('command') or [])
@@ -383,14 +356,8 @@ def generate_compose(topology, opencode_images=None):
                               else app.SMB_HOST_IMAGE)
             elif host.get('type') == 'coder56-mcp':
                 host_image = app.CODER56_MCP_HOST_IMAGE
-            elif host.get('type') == 'coder56-mcp-noguard':
-                host_image = app.CODER56_MCP_NOGUARD_HOST_IMAGE
-            elif host.get('type') == 'greedy-server':
-                host_image = app.GREEDY_HOST_IMAGE
             elif host.get('type') == 'erpnext-server':
                 host_image = app.ERPNEXT_HOST_IMAGE
-            elif host.get('type') == 'leosac-server':
-                host_image = app.LEOSAC_HOST_IMAGE
             elif host.get('type') == 'db-server':
                 host_image = app.DB_HOST_IMAGE
             elif host_has_agents:
@@ -486,31 +453,6 @@ def generate_compose(topology, opencode_images=None):
                     'start_period': '360s',
                 }
 
-            if host.get('type') == 'leosac-server':
-                # Persistence: the PostgreSQL datadir on a named volume so the
-                # ODB schema + seeded users/doors/credentials survive topology
-                # stop/start (compose down without -v preserves named volumes).
-                # The supervisor (leosac-app-start.sh) creates the first admin
-                # + seeds demo data only when that volume is fresh. start_period
-                # gives the first-boot stack (postgres + leosac schema creation
-                # + WS seeding + nginx) room before the healthcheck is
-                # evaluated; subsequent boots are much faster.
-                service_config['restart'] = 'unless-stopped'
-                pg_vol = f'leosac-pg-{service_name}'
-                compose.setdefault('volumes', {})[pg_vol] = {
-                    'name': f'{project_prefix}-{service_name}-pg-data',
-                }
-                service_config['volumes'] = [
-                    f'{pg_vol}:/var/lib/postgresql/16/main',
-                ]
-                service_config['healthcheck'] = {
-                    'test': ['CMD', '/usr/local/bin/leosac-healthcheck.sh'],
-                    'interval': '15s',
-                    'timeout': '10s',
-                    'retries': 28,
-                    'start_period': '420s',
-                }
-
             # Conditional OpenCode configuration (ports, volumes, environment, healthcheck) only when agents present
             if host_has_agents:
                 # Agent scripts (host AGENTS_HOST_PATH) + the shared outputs dir (host, rw)
@@ -539,33 +481,14 @@ def generate_compose(topology, opencode_images=None):
 
                 # Add SSH and compromised credentials environment variables
                 # Get the actual API key value from the environment at generation time
-                # This allows the docker-compose file to work when started directly.
-                # Per-host LLM override: optional host fields llm_url / llm_model /
-                # llm_api_key let ONE topology run on a different provider (e.g. a
-                # local Ollama box) while every other host keeps the plugin-global
-                # provider — the env also feeds the in-container guardrail judge,
-                # so the judge follows the agent to the same provider.
-                api_key_value = str(
-                    host.get('llm_api_key') or os.environ.get('OPENCODE_API_KEY', ''))
+                # This allows the docker-compose file to work when started directly
+                api_key_value = os.environ.get('OPENCODE_API_KEY', '')
                 service_config['environment'] = {
                     'OPENCODE_API_KEY': api_key_value,
-                    'LLM_URL': str(host.get('llm_url') or app.LLM_URL_FULL),
-                    'LLM_MODEL': str(host.get('llm_model') or app.LLM_MODEL),
+                    'LLM_URL': app.LLM_URL_FULL,
+                    'LLM_MODEL': app.LLM_MODEL,
                     'SSH_COMPROMISED_USER': 'labuser',
                     'SSH_COMPROMISED_PASS': host.get('password', 'strato'),
-                    # 2026-11-14 cause-#4 (paper-l1-fmfix2): disable opencode's
-                    # Cloudflare-fronted remote fetches — a models.dev registry
-                    # fetch stalled the /session handler ~152s (607KB unacked on
-                    # Cloudflare 104.16.x), the agent-manager's create timeout
-                    # orphaned the already-created session. MODELS_FETCH is the
-                    # only knob with no opencode.json config equivalent (env-only);
-                    # SHARE/AUTOUPDATE duplicate the share:"disabled" +
-                    # autoupdate:false config keys so a config-regen drift cannot
-                    # re-arm the fetches. Both the executor serve (4096) and the
-                    # guardrail serve (4097) inherit these from container env.
-                    'OPENCODE_DISABLE_MODELS_FETCH': '1',
-                    'OPENCODE_DISABLE_SHARE': '1',
-                    'OPENCODE_DISABLE_AUTOUPDATE': '1',
                     # Write run logs into the mounted /outputs so get_trident_base()
                     # resolves there and logs persist + are aligned with SLIPS/defender.
                     'TRIDENT_HOME': '/outputs',
@@ -617,7 +540,7 @@ def generate_compose(topology, opencode_images=None):
                 # FastMCP bridge (spawned lazily by opencode on the first MCP tool
                 # call) can reach it. The MCP "mcp" block itself is injected into
                 # opencode.json by scripts.py opencode_agent_block.
-                if host.get('type') in ('coder56-mcp', 'coder56-mcp-noguard'):
+                if host.get('type') == 'coder56-mcp':
                     service_config['environment']['HEXSTRIKE_ENABLED'] = '1'
                     # The backend provisions on first boot (~2-5s for the Flask
                     # import stack) before it serves :8888. Without a healthcheck a
@@ -651,43 +574,37 @@ def generate_compose(topology, opencode_images=None):
             # the (agent-adjusted) command with the original image entrypoint
             # and merge OBS_* env into the agent environment. Images in
             # OBSERVER_UNSUPPORTED_IMAGES stay unobserved (labelled).
-            if observer_cfg and _observer_supported(service_config['image']):
+            observe_host = _host_observation_enabled(host, observer_cfg)
+            if observer_cfg and observe_host and _observer_supported(service_config['image']):
                 _apply_observer(service_config, topology, run_id, service_name,
-                                observer_cfg, has_agents=host_has_agents,
-                                strace_enabled=bool(host.get('strace_enabled')))
-            elif observer_cfg:
+                                observer_cfg, has_agents=host_has_agents)
+            elif observer_cfg and observe_host:
                 print(f"⚠️  NSG observer skipped for {service_name} "
                       f"({service_config['image']}): {OBSERVER_UNSUPPORTED_IMAGES[service_config['image']]}")
                 service_config.setdefault('labels', []).append('scl.role=observer-skipped')
             compose['services'][service_name] = service_config
 
     # SLIPS sensor sidecar: reads the shared pcaps volume and forwards alerts to
-    # the agent-manager defender webhook. It is kept OFF every topology-visible
-    # subnet so it can never appear to a benchmarked agent as a network peer,
-    # but per the integration plan (SOC_GOD_INTEGRATION_PLAN.md, Workstream D)
-    # it joins the shared `scl-playground-net` control-plane network — where the
-    # agent-manager dashboard container lives at `scl-agent-manager-dashboard:8080`
-    # — because the dashboard publishes its host port on 127.0.0.1 only, so the
-    # `host.docker.internal:<DASHBOARD_PORT>` route is unreachable from any
-    # docker bridge (live-verified 2026-11-11: forward_alerts failed with
-    # EHOSTUNREACH on every POST). The playground network carries no topology
-    # hosts, so the sensor still cannot see (or be seen by) benchmarked traffic.
+    # the agent-manager defender webhook. It is deliberately kept OFF every
+    # topology-visible subnet (and off any shared SCL network) so it can never
+    # appear to a benchmarked agent as a network peer. To reach the agent-manager
+    # it uses the Docker host gateway (`host.docker.internal`, mapped to
+    # host-gateway via extra_hosts on Linux) and the agent-manager's published
+    # DASHBOARD_PORT — no shared Docker network required. The sensor has no
+    # `networks` key, so Docker attaches it only to the project's implicit default
+    # bridge, which carries no topology hosts.
     if slips_enabled and pcaps_volume:
         dashboard_port = os.environ.get('DASHBOARD_PORT', '9005')
         defender_url = os.environ.get(
             'DEFENDER_URL',
-            'http://scl-agent-manager-dashboard:8080/api/defender/alerts',
+            f'http://host.docker.internal:{dashboard_port}/api/defender/alerts',
         )
-        compose['networks']['scl-playground-net'] = {
-            'external': True,
-            'name': 'scl-playground-net',
-        }
         compose['services']['slips-sensor'] = {
             'image': app.SLIPS_IMAGE,
             'container_name': f'{project_prefix}-slips-sensor',
             'cap_add': ['NET_ADMIN', 'NET_RAW'],
             'volumes': [f'{pcaps_volume}:/pcaps', f'{app.OUTPUTS_HOST_PATH}:/outputs'],
-            'networks': {'scl-playground-net': None},
+            'extra_hosts': ['host.docker.internal:host-gateway'],
             'environment': {
                 'DEFENDER_URL': defender_url,
                 'RUN_ID': run_id,

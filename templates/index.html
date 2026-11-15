@@ -679,6 +679,7 @@
               generate_data: ['web-server', 'file-server', 'db', 'log-server'].includes(roles[h % roles.length]),
               data_prompt: '',
               data_content: '',
+              observation_enabled: false,
               agents: []
             }))
           };
@@ -728,7 +729,10 @@
             firewall: { allowed: defaultFirewall(nets) }
           },
           infrastructure: { hackerlab_network_id: nets[0]?.id || '' },
-          monitoring: { slips: { enabled: false, capture_source: '', defender_enabled: true } },
+          monitoring: {
+            slips: { enabled: false, capture_source: '', defender_enabled: true },
+            nsg_observer: { enabled: false, state_level: 'operational' }
+          },
           networks: nets,
           visual: { routers: {}, networks: {} }
         };
@@ -751,6 +755,10 @@
         }
         model.monitoring = model.monitoring || {};
         model.monitoring.slips = model.monitoring.slips || {};
+        model.monitoring.nsg_observer = model.monitoring.nsg_observer || {};
+        const allHosts = model.networks.flatMap((network) => network.hosts || []);
+        const hasObservationSelection = allHosts.some((host) => typeof host.observation_enabled === 'boolean');
+        const legacyObservationEnabled = !!model.monitoring.nsg_observer.enabled;
         const slips = model.monitoring.slips;
         if (typeof slips.enabled !== 'boolean') slips.enabled = false;
         if (typeof slips.defender_enabled !== 'boolean') slips.defender_enabled = true;
@@ -762,6 +770,9 @@
           }
           network.hosts = network.hosts || [];
           network.hosts.forEach((host) => {
+            if (typeof host.observation_enabled !== 'boolean') {
+              host.observation_enabled = hasObservationSelection ? false : legacyObservationEnabled;
+            }
             if (!Array.isArray(host.agents)) {
               host.agents = [];
             }
@@ -1009,7 +1020,7 @@
         return `
           <div class="host" data-host="${hostIndex}">
             <div class="host-head">
-              <h4>${escapeHtml(host.name || `host-${hostIndex + 1}`)}${hasAgents ? ' <span class="pill" style="background:#eef6ff;color:#1d4ed8">OpenCode</span>' : ''}</h4>
+              <h4>${escapeHtml(host.name || `host-${hostIndex + 1}`)}${hasAgents ? ' <span class="pill" style="background:#eef6ff;color:#1d4ed8">OpenCode</span>' : ''}${host.observation_enabled ? ' <span class="pill" style="background:#ecfdf5;color:#047857">Observed</span>' : ''}</h4>
               <span class="inline-ip">IP <code>${escapeHtml(hostIp)}</code></span>
             </div>
             <div class="row">
@@ -1040,6 +1051,12 @@
                 <label class="checkbox-line" style="margin: 0">
                   <input data-field="host.ssh_enabled" type="checkbox" ${host.ssh_enabled ? 'checked' : ''}>
                   <span>Enable SSH on this host</span>
+                </label>
+              </div>
+              <div class="span-12">
+                <label class="checkbox-line" style="margin: 0">
+                  <input data-field="host.observation_enabled" type="checkbox" ${host.observation_enabled ? 'checked' : ''}>
+                  <span>Use NSG observation creation for this Docker host</span>
                 </label>
               </div>
               <div class="span-8">
@@ -1397,6 +1414,7 @@
                 username: valueOf(hostEl, 'host.username') || 'student',
                 password: valueOf(hostEl, 'host.password') || 'strato',
                 ssh_enabled: checkedOf(hostEl, 'host.ssh_enabled'),
+                observation_enabled: checkedOf(hostEl, 'host.observation_enabled'),
                 generate_data: checkedOf(hostEl, 'host.generate_data'),
                 data_prompt: valueOf(hostEl, 'host.data_prompt'),
                 data_content: valueOf(hostEl, 'host.data_content'),
@@ -1404,6 +1422,11 @@
               };
           });
         });
+        model.monitoring.nsg_observer = model.monitoring.nsg_observer || {};
+        model.monitoring.nsg_observer.enabled = model.networks.some((network) =>
+          network.hosts.some((host) => host.observation_enabled)
+        );
+        model.monitoring.nsg_observer.state_level = model.monitoring.nsg_observer.state_level || 'operational';
         model.router.firewall = model.router.firewall || {};
         model.router.firewall.allowed = model.router.firewall.allowed || [];
         selectedJsonEl.value = JSON.stringify(model, null, 2);
@@ -1482,6 +1505,7 @@
               <button class="secondary" data-action="load-topology" data-id="${item.id}" ${busyTopologyId ? 'disabled' : ''}>Load</button>
               <button data-action="start-topology" data-id="${item.id}" ${busyTopologyId ? 'disabled' : ''}>${busyTopologyId === item.id && busyTopologyAction === 'Starting topology' ? 'Starting...' : 'Start'}</button>
               <button class="secondary" data-action="stop-topology" data-id="${item.id}" ${busyTopologyId ? 'disabled' : ''}>${busyTopologyId === item.id && busyTopologyAction === 'Stopping topology' ? 'Stopping...' : 'Stop'}</button>
+              <button class="danger" data-action="delete-topology" data-id="${item.id}" ${busyTopologyId ? 'disabled' : ''}>${busyTopologyId === item.id && busyTopologyAction === 'Deleting topology' ? 'Deleting...' : 'Delete'}</button>
             </div>
           </div>
         `).join('') : '<p class="muted">No saved topologies yet.</p>';
@@ -1533,6 +1557,27 @@
           const job = await api(`api/topologies/${encodeURIComponent(id)}/stop`, { method: 'POST', body: '{}' });
           await waitForJob(job.job_id, 'Stopping topology...');
           setStatus('Topology stopped. It is no longer running.');
+        } finally {
+          busyTopologyId = '';
+          busyTopologyAction = '';
+          await refreshSaved();
+        }
+      }
+
+      async function deleteTopology(id) {
+        if (busyTopologyId) return;
+        const topology = saved.find((item) => item.id === id);
+        const name = topology?.name || id;
+        if (!window.confirm(`Delete saved topology "${name}"? This cannot be undone.`)) return;
+
+        busyTopologyId = id;
+        busyTopologyAction = 'Deleting topology';
+        setStatus(`Deleting ${name}...`);
+        await refreshSaved();
+        try {
+          await api(`api/topologies/${encodeURIComponent(id)}`, { method: 'DELETE' });
+          if (selectedId === id) selectedId = null;
+          setStatus(`Deleted ${name}.`);
         } finally {
           busyTopologyId = '';
           busyTopologyAction = '';
@@ -1671,7 +1716,7 @@
             const count = Math.max(1, Math.min(24, Number(valueOf(networkEl, 'network.hostCount')) || 1));
             const current = model.networks[i].hosts;
             while (current.length < count) {
-              current.push({ id: `h${i + 1}_${current.length + 1}`, name: `${model.networks[i].name}-${current.length + 1}`, type: 'normal-user', image: 'ubuntu:24.04', ssh_enabled: false, username: 'student', password: 'strato', generate_data: false, data_prompt: '', data_content: '', agents: [] });
+              current.push({ id: `h${i + 1}_${current.length + 1}`, name: `${model.networks[i].name}-${current.length + 1}`, type: 'normal-user', image: 'ubuntu:24.04', ssh_enabled: false, username: 'student', password: 'strato', generate_data: false, data_prompt: '', data_content: '', observation_enabled: false, agents: [] });
             }
             current.length = count;
             render();
@@ -1680,7 +1725,7 @@
             collect();
             const i = Number(event.target.dataset.networkIndex);
             const current = model.networks[i].hosts;
-            current.push({ id: `h${i + 1}_${current.length + 1}`, name: `${model.networks[i].name}-${current.length + 1}`, type: 'normal-user', image: 'ubuntu:24.04', ssh_enabled: false, username: 'student', password: 'strato', generate_data: false, data_prompt: '', data_content: '', agents: [] });
+            current.push({ id: `h${i + 1}_${current.length + 1}`, name: `${model.networks[i].name}-${current.length + 1}`, type: 'normal-user', image: 'ubuntu:24.04', ssh_enabled: false, username: 'student', password: 'strato', generate_data: false, data_prompt: '', data_content: '', observation_enabled: false, agents: [] });
             render();
           }
           if (action === 'delete-network') {
@@ -1764,6 +1809,7 @@
           if (action === 'load-topology') return loadTopology(event.target.dataset.id);
           if (action === 'start-topology') return startTopology(event.target.dataset.id);
           if (action === 'stop-topology') return stopTopology(event.target.dataset.id);
+          if (action === 'delete-topology') return deleteTopology(event.target.dataset.id);
           if (action === 'toggle-firewall' || firewallEl) {
             const target = firewallEl || event.target;
             collect();

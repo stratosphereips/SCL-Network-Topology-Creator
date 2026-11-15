@@ -220,7 +220,7 @@
             "privesc_nopasswd": false,
             "llm_url": "https://llm.ai.e-infra.cz/v1",
             "llm_provider": "einfra",
-            "llm_model": "glm-5.3"
+            "llm_model": "glm-5.2"
           }
         ]
       },

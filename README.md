@@ -43,3 +43,10 @@ Legacy saved topologies named `SSH Lab` are removed automatically the next time 
 ## LLM Data Generation
 
 The UI can request AI-generated sample data for selected hosts. The plugin calls the SCL dashboard LLM endpoint through `http://dashboard/api/llm/chat`, so it uses the model configured in the main SCL assistant.
+
+Each host also has a **Use NSG observation creation** toggle. Selected Docker
+hosts run with the observed image variant built from
+`NSG-docker-state-creator`, and write their evidence beneath the topology run's
+`observer/` output directory. The topology router is observed whenever at least
+one host is selected so routed traffic remains visible. Existing topology files
+with the former topology-wide observer setting continue to select every host.
