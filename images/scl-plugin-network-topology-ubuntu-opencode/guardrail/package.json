@@ -1,0 +1,13 @@
+{
+  "name": "sclt-guardrail-plugin",
+  "version": "1.0.0",
+  "private": true,
+  "description": "SCLT executor-side OpenCode guardrail tests and development dependencies.",
+  "type": "module",
+  "scripts": {
+    "test": "bun test judge_lock.test.ts"
+  },
+  "dependencies": {
+    "@opencode-ai/plugin": "1.18.3"
+  }
+}

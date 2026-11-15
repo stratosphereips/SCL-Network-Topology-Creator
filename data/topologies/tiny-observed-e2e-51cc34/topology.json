@@ -1,0 +1,157 @@
+{
+  "created_at": "2026-09-09T17:12:11Z",
+  "host_count": 4,
+  "id": "tiny-observed-e2e-51cc34",
+  "infrastructure": {
+    "hackerlab_network_id": "client"
+  },
+  "monitoring": {
+    "nsg_observer": {
+      "_note": "All hosts + router run -observed image derivatives built from stratosphereips/NSG-docker-state-creator. Evidence lands in outputs/<run_id>/observer/<service>/. Zeek/BCC off (arm64 host, unprivileged victims); router keeps the pcap ring.",
+      "enabled": true,
+      "state_level": "operational"
+    },
+    "slips": {
+      "capture_source": "router1",
+      "defender_enabled": true,
+      "enabled": false
+    }
+  },
+  "name": "tiny-observed-e2e",
+  "networks": [
+    {
+      "cidr": "10.10.10.0/24",
+      "default_router_id": "router1",
+      "hosts": [
+        {
+          "agent_enabled": false,
+          "agent_type": "",
+          "agents": [],
+          "data_content": "",
+          "data_prompt": "",
+          "generate_data": false,
+          "id": "client-host",
+          "image": "ubuntu:24.04",
+          "name": "client-host",
+          "password": "strato",
+          "privesc_nopasswd": true,
+          "ssh_enabled": true,
+          "type": "normal-user",
+          "username": "student"
+        },
+        {
+          "agent_enabled": false,
+          "agent_type": "",
+          "agents": [
+            "coder56"
+          ],
+          "data_content": "",
+          "data_prompt": "",
+          "generate_data": false,
+          "guardrail_enabled": true,
+          "id": "attacker",
+          "image": "ubuntu:24.04",
+          "llm_api_key": "sk-bdeda8f16bdf44ac88f80d61c19d6c8e",
+          "llm_model": "glm-5.3",
+          "llm_provider": "einfra",
+          "llm_url": "https://llm.ai.e-infra.cz/v1",
+          "name": "attacker",
+          "password": "strato",
+          "privesc_nopasswd": false,
+          "ssh_enabled": false,
+          "type": "coder56-mcp",
+          "username": "student"
+        }
+      ],
+      "id": "client",
+      "internet": false,
+      "name": "Client Network",
+      "router_id": "router1",
+      "router_ids": [
+        "router1"
+      ]
+    },
+    {
+      "cidr": "10.10.20.0/24",
+      "default_router_id": "router1",
+      "hosts": [
+        {
+          "agent_enabled": false,
+          "agent_type": "",
+          "agents": [],
+          "data_content": "",
+          "data_prompt": "Sensitive company financial records",
+          "generate_data": true,
+          "id": "file-server",
+          "image": "ubuntu:24.04",
+          "name": "file-server",
+          "password": "strato",
+          "privesc_nopasswd": false,
+          "ssh_enabled": true,
+          "type": "smb-server",
+          "username": "student"
+        }
+      ],
+      "id": "server",
+      "internet": false,
+      "name": "Server Network",
+      "router_id": "router1",
+      "router_ids": [
+        "router1"
+      ]
+    },
+    {
+      "cidr": "213.47.23.0/24",
+      "default_router_id": "router1",
+      "hosts": [
+        {
+          "agent_enabled": false,
+          "agent_type": "",
+          "agents": [],
+          "data_content": "",
+          "data_prompt": "",
+          "generate_data": false,
+          "id": "cnc-host",
+          "image": "ubuntu:24.04",
+          "ip_override": "213.47.23.195",
+          "name": "cnc-host",
+          "password": "strato",
+          "privesc_nopasswd": false,
+          "ssh_enabled": false,
+          "type": "exfil-listener",
+          "username": "student"
+        }
+      ],
+      "id": "cnc",
+      "internet": false,
+      "name": "C&C Network",
+      "router_id": "router1",
+      "router_ids": [
+        "router1"
+      ]
+    }
+  ],
+  "router": {
+    "firewall": {
+      "allowed": [
+        "client->server",
+        "client->cnc"
+      ]
+    },
+    "password": "strato",
+    "ssh_enabled": false,
+    "username": "admin"
+  },
+  "routers": [
+    {
+      "id": "router1",
+      "name": "core",
+      "parent_router_id": "",
+      "password": "strato",
+      "ssh_enabled": false,
+      "username": "admin"
+    }
+  ],
+  "status": "draft",
+  "updated_at": "2026-09-09T19:15:11Z"
+}

@@ -1,0 +1,52 @@
+<?xml version="1.0"?>
+<!-- Leosac kernel config for the SCL leosac-server host.
+     Shape lifted from upstream cfg/dev-test/ws-amd64.xml: pgsql backend (weak
+     planted creds are the point of the lab target), websock-api module on
+     :8888 (the Ember UI's WebSocket API), SMTP module (the web UI ships an
+     smtp engine; it only needs use_database). Hardware modules (libgpiod,
+     led-buzzer, wiegand, doorman) are intentionally absent — no GPIO in a
+     container. leosac auto-creates/upgrades the schema on startup. -->
+<kernel>
+    <instance_name>leosac-lab</instance_name>
+    <database>
+        <type>pgsql</type>
+        <username>leosac</username>
+        <password>leosac123</password>
+        <dbname>leosac</dbname>
+        <host>127.0.0.1</host>
+        <startup_abort_time>30</startup_abort_time>
+    </database>
+
+    <plugin_directories>
+        <plugindir>/usr/local/lib/leosac</plugindir>
+    </plugin_directories>
+
+    <network>
+        <enabled>false</enabled>
+    </network>
+
+    <log>
+      <enable_database>false</enable_database>
+    </log>
+
+    <modules>
+        <module>
+            <name>WEBSOCK_API</name>
+            <file>libwebsock-api.so</file>
+            <level>1</level>
+            <module_config>
+              <port>8888</port>
+              <interface>0.0.0.0</interface>
+            </module_config>
+        </module>
+
+        <module>
+            <name>SMTP</name>
+            <file>libsmtp.so</file>
+            <level>2</level>
+            <module_config>
+              <use_database>true</use_database>
+            </module_config>
+        </module>
+    </modules>
+</kernel>

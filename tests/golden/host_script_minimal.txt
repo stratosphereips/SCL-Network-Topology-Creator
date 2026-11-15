@@ -1,0 +1,31 @@
+set -eu
+ip route replace default via 10.77.1.254 || echo "WARN: failed to set default route via 10.77.1.254" >&2
+echo "nameserver 8.8.8.8" > /etc/resolv.conf
+echo "nameserver 8.8.4.4" >> /etc/resolv.conf
+mkdir -p /srv/scl-data /srv/www /srv/files /srv/db /var/log/scl /tmp/agents
+cat > /etc/scl-host.json <<'JSON'
+{
+  "topology": "Test Lab",
+  "network": "Net One",
+  "host": "host1",
+  "role": "Web server",
+  "ip": "10.77.1.10"
+}
+JSON
+cat > /srv/scl-data/README.txt <<'DATA'
+Topology: Test Lab
+Network: Net One
+Host: host1
+Role: Web server
+No AI-generated data was requested for this host.
+
+DATA
+cp /srv/scl-data/README.txt /srv/www/index.txt || true
+cp /srv/scl-data/README.txt /srv/files/share.txt || true
+printf '<h1>SCL web server</h1><pre>%s</pre>' "$(cat /srv/scl-data/README.txt)" > /srv/www/index.html
+python3 -m http.server 80 -d /srv/www &
+
+
+
+touch /tmp/scl-host-init-ready
+tail -f /dev/null
