@@ -28,6 +28,7 @@
   },
   "model": "einfra/glm-5.2",
   "autoupdate": false,
+  "share": "disabled",
   "subagent_depth": 2,
   "compaction": {
     "auto": true,

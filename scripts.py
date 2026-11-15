@@ -262,6 +262,13 @@ mkdir -p /root/.config/opencode /root/.local/share/opencode /var/log/opencode
 # llm_model override silently keeps launching the baked model against the
 # overridden provider (ProviderModelNotFoundError on every prompt).
 sed -i "s|^model: .*$|model: {provider}/{llm_model}|" /root/.config/opencode/agents/*.md 2>/dev/null || true
+# 2026-11-14 cause-#4 (paper-l1-fmfix2): stop opencode from fetching
+# Cloudflare-fronted services during /session — a models.dev registry fetch
+# stalled the handler ~152s, the client's 30s create timeout orphaned an
+# already-created session. share:"disabled" kills the share/upload path at
+# config level; the models.dev registry fetch has NO config key, it is disabled
+# via the OPENCODE_DISABLE_MODELS_FETCH env var set in compose.py (agent hosts),
+# alongside OPENCODE_DISABLE_SHARE / OPENCODE_DISABLE_AUTOUPDATE belt-and-braces.
 cat > /root/.config/opencode/opencode.json <<'OPENCODE_JSON'
 {{
   "$$schema": "https://opencode.ai/config.json",
@@ -293,6 +300,7 @@ cat > /root/.config/opencode/opencode.json <<'OPENCODE_JSON'
   }},
   "model": "{provider}/{llm_model}",
   "autoupdate": false,
+  "share": "disabled",
   "subagent_depth": 2,
   "compaction": {{
     "auto": true,

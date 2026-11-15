@@ -51,9 +51,14 @@ def _parse_slips_alert(raw: str) -> Dict[str, object]:
         out["sourceip"] = m.group(1)
         out["srcip"] = m.group(1)
 
-    # Destination IP (multiple patterns)
+    # Destination IP (multiple patterns).
+    # 2026-11-13: scan evidence reads "port scan to IP 10.10.20.50" — the old
+    # `to\s+(\d+...)` required digits right after "to", missed the "IP" token,
+    # and every PORT_SCAN alert lost its destip (forwarder-side half of
+    # iterate_socgod.md LINK D; the API-side fallback lives in
+    # SCL-Agent-Manager backend/services/defender/target_resolver.alert_destip).
     for pattern in [
-        r"to\s+(\d+\.\d+\.\d+\.\d+)",
+        r"to\s+(?:IP\s+)?(\d+\.\d+\.\d+\.\d+)",
         r"destination\s+(?:IP|ip):?\s+(\d+\.\d+\.\d+\.\d+)",
         r"ip daddr\s+(\d+\.\d+\.\d+\.\d+)",
     ]:

@@ -155,7 +155,7 @@ RUN echo "labuser ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/labuser && \\
 # Copy OpenCode configuration file with {{env:}} placeholders
 # This is a fallback config - opencode_agent_block will override with selected agents
 # OpenCode will substitute {{env:VAR_NAME}} with actual environment variable values
-RUN printf '{{\\n  "$schema": "https://opencode.ai/config.json",\\n  "provider": {{\\n    "e-infra-chat": {{\\n      "npm": "@ai-sdk/openai-compatible",\\n      "name": "e-INFRA CZ Chat API",\\n      "options": {{\\n        "baseURL": "{{{{env:LLM_URL}}}}",\\n        "apiKey": "{{{{env:OPENCODE_API_KEY}}}}"\\n      }},\\n      "models": {{\\n        "glm-5.2": {{\\n          "name": "GLM-5.2",\\n          "limit": {{\\n            "context": 200000,\\n            "output": 65536\\n          }}\\n        }}\\n      }}\\n    }}\\n  }},\\n  "model": "e-infra-chat/glm-5.2",\\n  "autoupdate": false,\\n  "subagent_depth": 2,\\n  "tools": {{\\n    "skill": true,\\n    "task": true,\\n    "bash": true\\n  }},\\n  "permission": {{\\n    "default": "allow",\\n    "edit": {{ "*": "allow" }},\\n    "write": {{ "*": "allow" }}\\n  }}\\n}}\\n' > /root/.config/opencode/opencode.json
+RUN printf '{{\\n  "$schema": "https://opencode.ai/config.json",\\n  "provider": {{\\n    "e-infra-chat": {{\\n      "npm": "@ai-sdk/openai-compatible",\\n      "name": "e-INFRA CZ Chat API",\\n      "options": {{\\n        "baseURL": "{{{{env:LLM_URL}}}}",\\n        "apiKey": "{{{{env:OPENCODE_API_KEY}}}}"\\n      }},\\n      "models": {{\\n        "glm-5.2": {{\\n          "name": "GLM-5.2",\\n          "limit": {{\\n            "context": 200000,\\n            "output": 65536\\n          }}\\n        }}\\n      }}\\n    }}\\n  }},\\n  "model": "e-infra-chat/glm-5.2",\\n  "autoupdate": false,\\n  "share": "disabled",\\n  "subagent_depth": 2,\\n  "tools": {{\\n    "skill": true,\\n    "task": true,\\n    "bash": true\\n  }},\\n  "permission": {{\\n    "default": "allow",\\n    "edit": {{ "*": "allow" }},\\n    "write": {{ "*": "allow" }}\\n  }}\\n}}\\n' > /root/.config/opencode/opencode.json
 
 # Expose OpenCode HTTP API port
 EXPOSE 4096
@@ -509,7 +509,9 @@ def ensure_coder56_mcp_image(topology, force_rebuild=False):
     time. See images/scl-coder56-mcp-host/.
     """
     has_coder56_mcp_host = any(
-        host.get('type') == 'coder56-mcp'
+        # The noguard overlay is FROM scl-coder56-mcp-host:0.1, so a
+        # coder56-mcp-noguard host needs this base image built too.
+        host.get('type') in ('coder56-mcp', 'coder56-mcp-noguard')
         for network in topology.get('networks', [])
         for host in network.get('hosts', [])
     )

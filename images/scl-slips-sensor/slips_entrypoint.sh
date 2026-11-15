@@ -74,16 +74,37 @@ if not path.exists():
 text = path.read_text(encoding="utf-8")
 INTENDED = ["template", "rnn_cc_detection", "flowmldetection", "threat_intelligence",
             "update_manager", "virustotal", "timeline", "blocking", "ip_info",
-            "risk_iq", "leak_detector"]
+            "risk_iq", "leak_detector", "ml_linear_model", "ml_online_model"]
 wanted = "  disable: [" + ", ".join(INTENDED) + "]"
-m = re.search(r'^[ \t]*disable:[ \t]*\[[^\]]*\]', text, re.MULTILINE)
+# The disable list appears in two YAML styles:
+#   inline:  disable: [a, b, ...]
+#   block:   disable: \n    - a \n    - b ...
+# The base-image slips.yaml ships the BLOCK style (live-verified 2026-11-14 from
+# stratosphereips/slips:latest: "disable:\n    - template"); the old regex only
+# matched inline lists, so tuning was a silent no-op ("⚠️ no disable: list
+# found") -> ALL modules ran -> every pcap exceeded SLIPS_PROCESS_TIMEOUT=240,
+# was killed, retried <=5x (~20min/pcap) and the alert backlog exploded
+# (iterate_socgod.md LINK A). Match EITHER form and rewrite to the inline
+# tuned list (13 modules = the list validated live on 2026-11-13).
+m = re.search(r'^([ \t]*)disable:[ \t]*\[[^\]]*\][ \t]*$', text, re.MULTILINE)
+style = "inline"
+if not m:
+    style = "block"
+    m = re.search(
+        r'^[ \t]*disable:[ \t]*\n((?:[ \t]*-[ \t]*\S+[ \t]*\n)+)', text, re.MULTILINE)
 if not m:
     print(f"⚠️ no disable: list found in {path}")
 elif m.group(0).strip() == wanted.strip():
     print(f"✅ SLIPS disable list already tuned in {path}")
 else:
-    path.write_text(text[:m.start()] + wanted + text[m.end():])
-    print(f"✅ Tuned SLIPS disable list -> [{', '.join(INTENDED)}]")
+    if style == "inline":
+        indent = m.group(1)
+    else:
+        indent_m = re.match(r'^([ \t]*)disable:', m.group(0), re.MULTILINE)
+        indent = indent_m.group(1) if indent_m else "  "
+    repl = indent + wanted.strip() + ("\n" if style == "block" else "")
+    path.write_text(text[:m.start()] + repl + text[m.end():], encoding="utf-8")
+    print(f"✅ Tuned SLIPS disable list ({style} style) -> [{', '.join(INTENDED)}]")
 PY
 
 cd /opt/lab

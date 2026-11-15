@@ -27,7 +27,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends openssh-server 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         nmap smbclient krb5-user ldap-utils dnsutils python3-pip \
         hashcat pocl-opencl-icd ocl-icd-libopencl1 \
-        freerdp2-x11 xvfb hydra \
+        freerdp2-x11 xvfb hydra sshpass iptables \
     && rm -rf /var/lib/apt/lists/* \
     && pip3 install --break-system-packages impacket
 
