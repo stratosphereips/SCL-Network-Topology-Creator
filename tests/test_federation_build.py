@@ -110,6 +110,46 @@ def test_shipped_variants_grade_arp_detection_rate():
     assert rate("strong") == 1.0 > rate("middle") > rate("weak") > 0.0
 
 
+def test_shipped_variants_keep_arp_poisoner_off_and_leave_blocking_to_p():
+    # blocking loads only under -p (SLIPS_BLOCKING=1); arp_poisoner would
+    # ARP-spoof blocked IPs for the whole LAN, so every variant disables it
+    with open(os.path.join(CONFIGS_DIR, "variants.yaml")) as f:
+        variants = yaml.safe_load(f)["variants"]
+    for name, spec in variants.items():
+        disable = spec["disable"] if isinstance(spec, dict) else spec
+        assert "arp_poisoner" in disable, name
+        assert "blocking" not in disable, name
+
+
+def test_entrypoint_adds_p_only_when_node_conf_asks_for_blocking():
+    path = os.path.join(REPO_ROOT, "federation", "slips", "slips-entrypoint.sh")
+    script = f"""
+        SLIPS_ARGS=(-c config/slips_p2p.yaml -i eth0 -o /var/log/slips_output)
+        {_entrypoint_block(path)}
+        echo "${{SLIPS_ARGS[@]}}"
+    """
+    for env, want in (({}, False), ({"SLIPS_BLOCKING": "0"}, False),
+                      ({"SLIPS_BLOCKING": "1"}, True)):
+        out = subprocess.run(["bash", "-c", script], env={**env, "PATH": os.environ["PATH"]},
+                             capture_output=True, text=True, check=True).stdout
+        args = out.strip().splitlines()[-1].split()
+        assert ("-p" in args) is want, env
+        assert args[:6] == ["-c", "config/slips_p2p.yaml", "-i", "eth0",
+                            "-o", "/var/log/slips_output"]
+    with open(path) as f:
+        text = f.read()
+    assert 'python3 slips.py "${SLIPS_ARGS[@]}"' in text
+
+
+def _entrypoint_block(path):
+    """The entrypoint's SLIPS_BLOCKING if-block, verbatim."""
+    with open(path) as f:
+        lines = f.read().splitlines()
+    start = next(i for i, l in enumerate(lines) if "SLIPS_BLOCKING:-0" in l)
+    end = next(i for i in range(start, len(lines)) if lines[i].strip() == "fi")
+    return "\n".join(lines[start:end + 1])
+
+
 def test_shipped_overrides_and_variants_are_consistent():
     with open(os.path.join(CONFIGS_DIR, "overrides.yaml")) as f:
         overrides = yaml.safe_load(f)

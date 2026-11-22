@@ -215,7 +215,19 @@ echo "[P2P] Thread limits: OMP_NUM_THREADS=$OMP_NUM_THREADS MKL_NUM_THREADS=$MKL
 python3 -c "import multiprocessing; multiprocessing.set_start_method('spawn', force=True)" 2>/dev/null || true
 echo "[P2P] Multiprocessing start method set to spawn"
 
-python3 slips.py -c config/slips_p2p.yaml -i eth0 -o /var/log/slips_output >/var/log/slips/slips.log 2>&1 &
+# Blocking (off by default): SLIPS's blocking module needs the literal -p on
+# the command line (the evidence handler checks sys.argv) plus root and
+# NET_ADMIN, which sensors have. node.conf SLIPS_BLOCKING=1 turns it on (the
+# experiment runner appends it per run). arp_poisoner stays disabled in every
+# variant (configs/variants.yaml), so -p loads only the iptables blocking
+# module, whose rules live in this container's own network namespace.
+SLIPS_ARGS=(-c config/slips_p2p.yaml -i eth0 -o /var/log/slips_output)
+if [[ "${SLIPS_BLOCKING:-0}" == "1" ]]; then
+  SLIPS_ARGS+=(-p)
+  echo "[P2P] Blocking enabled (-p)"
+fi
+
+python3 slips.py "${SLIPS_ARGS[@]}" >/var/log/slips/slips.log 2>&1 &
 SLIPS_PID=$!
 
 if [[ "${RUN_WEB:-0}" == "1" ]]; then

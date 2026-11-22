@@ -20,6 +20,11 @@
 # sweep's flows cited as evidence) - equivalent to three ARP detectors of
 # different capability. Evenly spaced by design: strong 1.0 (omitted = default),
 # middle 0.75, weak 0.5 - so the per-peer order holds on ARP as well as conn.
+# Blocking: no variant disables the `blocking` module. SLIPS loads it only
+# when started with -p (slips-entrypoint.sh, node.conf SLIPS_BLOCKING=1), so
+# without -p nothing changes. `arp_poisoner` must stay disabled in EVERY
+# variant: under -p it would ARP-spoof blocked IPs for the whole LAN, not
+# just this peer.
 default: strong
 
 variants:
@@ -27,7 +32,6 @@ variants:
     disable:
       - template
       - exporting_alerts
-      - blocking
       - leak_detector
       - cyst
       - arp_poisoner
@@ -35,7 +39,6 @@ variants:
     disable:
       - template
       - exporting_alerts
-      - blocking
       - leak_detector
       - cyst
       - brute_force
@@ -49,7 +52,6 @@ variants:
     disable:
       - template
       - exporting_alerts
-      - blocking
       - leak_detector
       - cyst
       - brute_force
