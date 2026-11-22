@@ -14,6 +14,14 @@ if [[ -f /opt/network-setup/node.conf ]]; then
   MANAGED=1
 fi
 
+# Per-run settings written by the experiment runner (SLIPS_BLOCKING=1). Kept
+# apart from node.conf, which the compose start command rewrites at every
+# container start; run.conf stays in the container's filesystem, so it
+# survives the runner's restarts. It does not make the node managed.
+if [[ -f /opt/network-setup/run.conf ]]; then
+  . /opt/network-setup/run.conf
+fi
+
 # The sim networks are docker-internal (no docker gateway): route through
 # the topology router, which NATs internet-enabled networks. p2p_trust also
 # needs a default route to learn its own IP.
@@ -217,8 +225,8 @@ echo "[P2P] Multiprocessing start method set to spawn"
 
 # Blocking (off by default): SLIPS's blocking module needs the literal -p on
 # the command line (the evidence handler checks sys.argv) plus root and
-# NET_ADMIN, which sensors have. node.conf SLIPS_BLOCKING=1 turns it on (the
-# experiment runner appends it per run). arp_poisoner stays disabled in every
+# NET_ADMIN, which sensors have. run.conf SLIPS_BLOCKING=1 turns it on (the
+# experiment runner writes it per run). arp_poisoner stays disabled in every
 # variant (configs/variants.yaml), so -p loads only the iptables blocking
 # module, whose rules live in this container's own network namespace.
 SLIPS_ARGS=(-c config/slips_p2p.yaml -i eth0 -o /var/log/slips_output)

@@ -121,31 +121,45 @@ def test_shipped_variants_keep_arp_poisoner_off_and_leave_blocking_to_p():
         assert "blocking" not in disable, name
 
 
-def test_entrypoint_adds_p_only_when_node_conf_asks_for_blocking():
+def test_entrypoint_adds_p_only_when_run_conf_asks_for_blocking(tmp_path):
+    # the runner writes SLIPS_BLOCKING=1 into run.conf: node.conf is rewritten
+    # by the compose start command at every container start, so a flag kept
+    # there would be gone after the runner's restart
     path = os.path.join(REPO_ROOT, "federation", "slips", "slips-entrypoint.sh")
-    script = f"""
-        SLIPS_ARGS=(-c config/slips_p2p.yaml -i eth0 -o /var/log/slips_output)
-        {_entrypoint_block(path)}
-        echo "${{SLIPS_ARGS[@]}}"
-    """
-    for env, want in (({}, False), ({"SLIPS_BLOCKING": "0"}, False),
-                      ({"SLIPS_BLOCKING": "1"}, True)):
-        out = subprocess.run(["bash", "-c", script], env={**env, "PATH": os.environ["PATH"]},
-                             capture_output=True, text=True, check=True).stdout
-        args = out.strip().splitlines()[-1].split()
-        assert ("-p" in args) is want, env
-        assert args[:6] == ["-c", "config/slips_p2p.yaml", "-i", "eth0",
-                            "-o", "/var/log/slips_output"]
     with open(path) as f:
         text = f.read()
+    blocks = "\n".join(_entrypoint_if_block(text, marker) for marker in (
+        "-f /opt/network-setup/node.conf ]]", "-f /opt/network-setup/run.conf ]]",
+        "SLIPS_BLOCKING:-0"))
+    node, run = tmp_path / "node.conf", tmp_path / "run.conf"
+    blocks = (blocks.replace("/opt/network-setup/node.conf", str(node))
+              .replace("/opt/network-setup/run.conf", str(run)))
+    assert "/opt/" not in blocks
+    script = ("SLIPS_ARGS=(-c config/slips_p2p.yaml -i eth0 -o /var/log/slips_output)\n"
+              + blocks + '\necho "$MANAGED ${SLIPS_ARGS[@]}"')
+    node.write_text("SLIPS_PROFILE=weak\nGATEWAY_IP=10.77.1.254\n")
+    for run_conf, want in ((None, False), ("SLIPS_BLOCKING=0\n", False),
+                           ("SLIPS_BLOCKING=1\n", True)):
+        if run_conf is None:
+            run.unlink(missing_ok=True)
+        else:
+            run.write_text(run_conf)
+        out = subprocess.run(["bash", "-c", script], env={"PATH": os.environ["PATH"]},
+                             capture_output=True, text=True, check=True).stdout
+        managed, *args = out.strip().splitlines()[-1].split()
+        assert ("-p" in args) is want, run_conf
+        assert managed == "1"  # run.conf never changes the managed mode
+        assert args[:6] == ["-c", "config/slips_p2p.yaml", "-i", "eth0",
+                            "-o", "/var/log/slips_output"]
     assert 'python3 slips.py "${SLIPS_ARGS[@]}"' in text
+    assert text.index("run.conf ]]") < text.index("SLIPS_BLOCKING:-0")
 
 
-def _entrypoint_block(path):
-    """The entrypoint's SLIPS_BLOCKING if-block, verbatim."""
-    with open(path) as f:
-        lines = f.read().splitlines()
-    start = next(i for i, l in enumerate(lines) if "SLIPS_BLOCKING:-0" in l)
+def _entrypoint_if_block(text, marker):
+    """The entrypoint's `if [[ ... ]]; then ... fi` block whose first line
+    contains `marker`, verbatim."""
+    lines = text.splitlines()
+    start = next(i for i, l in enumerate(lines) if marker in l and l.startswith("if "))
     end = next(i for i in range(start, len(lines)) if lines[i].strip() == "fi")
     return "\n".join(lines[start:end + 1])
 
